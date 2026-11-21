@@ -66,6 +66,44 @@ var (
 	)
 )
 
+var (
+	// ExchangeRateLookupsTotal counts exchange rate lookups by where the rate
+	// was served from: cache, oracle or stale. A rising stale share means the
+	// oracle is unhealthy; a low cache share means the TTL is too short.
+	ExchangeRateLookupsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gpay_remit",
+			Name:      "exchange_rate_lookups_total",
+			Help:      "Exchange rate lookups by served source (cache, oracle, stale).",
+		},
+		[]string{"source"},
+	)
+
+	// WebhookRetryAttemptsTotal counts every webhook delivery attempt that is a
+	// retry (not the first attempt). kind is "inline" for short in-line retries
+	// of the initial delivery or "scheduled" for backoff-worker retries; outcome
+	// is "success" or "failure".
+	WebhookRetryAttemptsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gpay_remit",
+			Name:      "webhook_retry_attempts_total",
+			Help:      "Webhook delivery retry attempts by kind and outcome.",
+		},
+		[]string{"kind", "outcome"},
+	)
+
+	// WebhookDeadLettersTotal counts deliveries moved to the dead-letter queue.
+	// reason is "client_error" (4xx, never retried) or "retries_exhausted".
+	WebhookDeadLettersTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gpay_remit",
+			Name:      "webhook_dead_letters_total",
+			Help:      "Webhook deliveries moved to the dead-letter queue by reason.",
+		},
+		[]string{"reason"},
+	)
+)
+
 func init() {
 	prometheus.MustRegister(
 		HTTPRequestsTotal,
@@ -74,6 +112,9 @@ func init() {
 		PaymentsTotal,
 		PaymentAmountTotal,
 		PaymentErrorsTotal,
+		ExchangeRateLookupsTotal,
+		WebhookRetryAttemptsTotal,
+		WebhookDeadLettersTotal,
 	)
 }
 
