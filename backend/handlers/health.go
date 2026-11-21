@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/yourusername/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/config"
 	"gorm.io/gorm"
 )
 

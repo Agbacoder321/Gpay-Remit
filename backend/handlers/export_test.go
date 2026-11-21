@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -30,16 +30,16 @@ func seedTestPayments(db *gorm.DB, count int) []models.Payment {
 			SenderAccount:   fmt.Sprintf("SENDER%d", i+1),
 			RecipientID:     uint(i + 100),
 			RecipientAccount: fmt.Sprintf("RECIPIENT%d", i+1),
-			Amount:          float64(100 + i*10),
+			Amount:          int64(10000 + i*1000),
 			Currency:        "USD",
 			TargetCurrency:  "EUR",
-			ConvertedAmount: float64(90 + i*9),
+			ConvertedAmount: int64(9000 + i*900),
 			Status:          "completed",
-			Fee:             2.5,
-			PlatformFee:     1.0,
-			ForexFee:        0.5,
-			ComplianceFee:   0.5,
-			NetworkFee:      0.5,
+			Fee:             250,
+			PlatformFee:     100,
+			ForexFee:        50,
+			ComplianceFee:   50,
+			NetworkFee:      50,
 			TxHash:          fmt.Sprintf("hash%d", i),
 			EscrowID:        fmt.Sprintf("escrow%d", i),
 			Notes:           fmt.Sprintf("Test payment %d", i),

@@ -1,12 +1,13 @@
 package middleware
 
 import (
+	"sync"
 	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -40,7 +41,8 @@ func TestStartIdempotencyCleanupSchedulerCleansExpiredRecords(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	StartIdempotencyCleanupScheduler(ctx, db, 10*time.Millisecond)
+	var wg sync.WaitGroup
+	StartIdempotencyCleanupScheduler(ctx, &wg, db, 10*time.Millisecond)
 
 	require.Eventually(t, func() bool {
 		var count int64

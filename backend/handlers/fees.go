@@ -1,12 +1,13 @@
 package handlers
 
 import (
+	"math"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/gpay-remit/errors"
-	"github.com/yourusername/gpay-remit/services"
+	"github.com/Gpay-Remit/gpay-remit/errors"
+	"github.com/Gpay-Remit/gpay-remit/services"
 )
 
 type FeeHandler struct {
@@ -24,10 +25,15 @@ func (h *FeeHandler) Calculate(c *gin.Context) {
 		return
 	}
 
-	var amount float64
-	if _, err := fmt.Sscanf(amountStr, "%f", &amount); err != nil || amount <= 0 {
-		c.Error(errors.NewValidationError("invalid amount", "amount must be a positive number"))
-		return
+	var amount int64
+	if _, err := fmt.Sscanf(amountStr, "%d", &amount); err != nil || amount <= 0 {
+		var floatVal float64
+		if _, errF := fmt.Sscanf(amountStr, "%f", &floatVal); errF == nil && floatVal > 0 {
+			amount = int64(math.Round(floatVal * 100))
+		} else {
+			c.Error(errors.NewValidationError("invalid amount", "amount must be a positive integer in minor units (cents/stroops)"))
+			return
+		}
 	}
 
 	breakdown := h.fees.Calculate(amount)

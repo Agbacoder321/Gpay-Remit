@@ -16,7 +16,7 @@ type Invoice struct {
 	InvoiceNo   string         `gorm:"uniqueIndex;size:50;not null" json:"invoice_no"`
 	IssuerID    uint           `gorm:"index;not null" json:"issuer_id"`
 	RecipientID uint           `gorm:"index;not null" json:"recipient_id"`
-	Amount      float64        `gorm:"not null" json:"amount"`
+	Amount      int64          `gorm:"type:bigint;not null" json:"amount"`
 	Currency    string         `gorm:"size:10;not null" json:"currency"`
 	DueDate     *time.Time     `gorm:"index" json:"due_date"`
 	Status      string         `gorm:"index;size:20;default:'unpaid'" json:"status"` // unpaid, paid, overdue, cancelled

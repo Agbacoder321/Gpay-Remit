@@ -11,10 +11,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"github.com/yourusername/gpay-remit/config"
-	"github.com/yourusername/gpay-remit/middleware"
-	"github.com/yourusername/gpay-remit/models"
-	"github.com/yourusername/gpay-remit/services"
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/middleware"
+	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/services"
 	"github.com/stellar/go/txnbuild"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -96,7 +96,7 @@ func TestCreateRemittance(t *testing.T) {
 		reqBody := CreateRemittanceRequest{
 			SenderAccount:   "GCO7V6V6VZ5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X",
 			RecipientAccount: "GCO7V6V6VZ5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X",
-			Amount:          100.50,
+			Amount:          10050,
 			AssetCode:       "USDC",
 			Conditions:      map[string]interface{}{"note": "test"},
 		}
@@ -110,7 +110,7 @@ func TestCreateRemittance(t *testing.T) {
 
 		var payment models.Payment
 		db.First(&payment)
-		assert.Equal(t, 100.50, payment.Amount)
+		assert.Equal(t, int64(10050), payment.Amount)
 		assert.Equal(t, "USDC", payment.Currency)
 	})
 
@@ -182,7 +182,7 @@ func TestCreateRemittance(t *testing.T) {
 		reqBody := CreateRemittanceRequest{
 			SenderAccount:    "GCO7V6V6VZ5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X",
 			RecipientAccount: "GCO7V6V6VZ5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X",
-			Amount:           50,
+			Amount:           5000,
 			AssetCode:        "USDC",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -197,7 +197,7 @@ func TestCreateRemittance(t *testing.T) {
 		reqBody := CreateRemittanceRequest{
 			SenderAccount:    "GCO7V6V6VZ5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X",
 			RecipientAccount: "GCO7V6V6VZ5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X6Z5X",
-			Amount:           999999999.99,
+			Amount:           99999999999,
 			AssetCode:        "USDC",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -219,7 +219,7 @@ func TestPaginationOverflow(t *testing.T) {
 		payment := models.Payment{
 			SenderID:    1,
 			RecipientID: 2,
-			Amount:      float64(100 + i),
+			Amount:      int64(100 + i),
 			Currency:    "USD",
 			Status:      "pending",
 		}
@@ -284,7 +284,7 @@ func TestCursorPagination(t *testing.T) {
 		payment := models.Payment{
 			SenderID:    1,
 			RecipientID: 2,
-			Amount:      float64(100 + i),
+			Amount:      int64(100 + i),
 			Currency:    "USD",
 			Status:      "pending",
 			CreatedAt:   now.Add(time.Duration(i) * time.Hour), // Different timestamps

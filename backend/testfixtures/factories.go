@@ -22,12 +22,13 @@
 package testfixtures
 
 import (
+	"math"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/brianvoe/gofakeit/v7"
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/models"
 )
 
 // Seed fixes the generator so a failing test can be replayed exactly.
@@ -77,8 +78,8 @@ func CountryCode() string {
 
 // Amount returns a positive monetary value rounded to two decimal places, so
 // float comparisons in assertions behave predictably.
-func Amount() float64 {
-	return float64(gofakeit.IntRange(100, 500000)) / 100
+func Amount() int64 {
+	return int64(gofakeit.IntRange(100, 500000))
 }
 
 // TxHash returns a 64-character hex string shaped like a Stellar transaction hash.
@@ -190,7 +191,7 @@ func WithPaymentStatus(status string) PaymentOption {
 // WithPaymentAmount sets the amount and recalculates the derived fee total.
 func WithPaymentAmount(amount float64, currency string) PaymentOption {
 	return func(p *models.Payment) {
-		p.Amount = amount
+		p.Amount = int64(math.Round(amount * 100))
 		p.Currency = currency
 		applyFees(p)
 	}
@@ -211,7 +212,7 @@ func WithParties(sender, recipient *models.User) PaymentOption {
 func WithCrossCurrency(target string, rate float64) PaymentOption {
 	return func(p *models.Payment) {
 		p.TargetCurrency = target
-		p.ConvertedAmount = round2(p.Amount * rate)
+		p.ConvertedAmount = int64(math.Round(float64(p.Amount) * rate))
 		applyFees(p)
 	}
 }
@@ -222,13 +223,13 @@ func WithCrossCurrency(target string, rate float64) PaymentOption {
 // that set them independently would produce records the application's own
 // invariants say are impossible.
 func applyFees(p *models.Payment) {
-	p.PlatformFee = round2(p.Amount * 0.01)
-	p.NetworkFee = 0.00001
-	p.ComplianceFee = round2(p.Amount * 0.001)
+	p.PlatformFee = (p.Amount * 100) / 10000
+	p.NetworkFee = (p.Amount * 15) / 10000
+	p.ComplianceFee = (p.Amount * 10) / 10000
 	if p.TargetCurrency != "" && p.TargetCurrency != p.Currency {
-		p.ForexFee = round2(p.Amount * 0.005)
+		p.ForexFee = (p.Amount * 50) / 10000
 	}
-	p.Fee = round2(p.PlatformFee + p.NetworkFee + p.ComplianceFee + p.ForexFee)
+	p.Fee = p.PlatformFee + p.NetworkFee + p.ComplianceFee + p.ForexFee
 }
 
 func round2(v float64) float64 {

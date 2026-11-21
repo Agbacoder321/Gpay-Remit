@@ -9,10 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"github.com/yourusername/gpay-remit/config"
-	"github.com/yourusername/gpay-remit/middleware"
-	"github.com/yourusername/gpay-remit/models"
-	"github.com/yourusername/gpay-remit/services"
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/middleware"
+	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/services"
 )
 
 func setupAuthHandler(t *testing.T) (*AuthHandler, *gin.Engine) {

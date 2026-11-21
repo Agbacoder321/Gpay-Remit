@@ -1,3 +1,4 @@
+import { formatMinorUnits } from '../utils/currency';
 // #109 skeleton loader  #113 real-time polling  #116 accessibility
 import React, { useState, useCallback } from "react";
 import { getInvoices } from "../services/api";
@@ -54,7 +55,7 @@ function InvoiceViewer() {
               {invoices.map((invoice) => (
                 <tr key={invoice.id}>
                   <td>{invoice.invoice_no}</td>
-                  <td>{invoice.amount}</td>
+                  <td>{formatMinorUnits(invoice.amount, invoice.currency)}</td>
                   <td>{invoice.currency}</td>
                   <td>
                     <span className={`status-badge status-${invoice.status?.toLowerCase()}`}>

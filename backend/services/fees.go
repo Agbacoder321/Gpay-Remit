@@ -1,17 +1,15 @@
 package services
 
 import (
-	"math"
-
-	"github.com/yourusername/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/config"
 )
 
 type FeeBreakdown struct {
-	PlatformFee   float64 `json:"platform_fee"`
-	ForexFee      float64 `json:"forex_fee"`
-	ComplianceFee float64 `json:"compliance_fee"`
-	NetworkFee    float64 `json:"network_fee"`
-	TotalFee      float64 `json:"total_fee"`
+	PlatformFee   int64 `json:"platform_fee"`
+	ForexFee      int64 `json:"forex_fee"`
+	ComplianceFee int64 `json:"compliance_fee"`
+	NetworkFee    int64 `json:"network_fee"`
+	TotalFee      int64 `json:"total_fee"`
 }
 
 type FeeService struct {
@@ -22,18 +20,12 @@ func NewFeeService(cfg *config.Config) *FeeService {
 	return &FeeService{cfg: cfg}
 }
 
-func bps(amount float64, bps int) float64 {
-	return amount * float64(bps) / 10000.0
+func bps(amount int64, bps int) int64 {
+	return (amount * int64(bps)) / 10000
 }
 
-func roundMoney(v float64) float64 {
-	// Keep responses stable and DB-friendly for typical fiat-style amounts.
-	return math.Round(v*100) / 100
-}
-
-// Calculate returns a fee breakdown. Fee config is intended to mirror the on-chain
-// escrow contract fee structure (PaymentEscrow).
-func (s *FeeService) Calculate(amount float64) FeeBreakdown {
+// Calculate returns a fee breakdown using integer arithmetic for minor units (cents/stroops).
+func (s *FeeService) Calculate(amount int64) FeeBreakdown {
 	platform := bps(amount, s.cfg.PlatformFeeBps)
 	forex := bps(amount, s.cfg.ForexFeeBps)
 	compliance := bps(amount, s.cfg.ComplianceFeeBps)
@@ -41,29 +33,29 @@ func (s *FeeService) Calculate(amount float64) FeeBreakdown {
 
 	total := platform + forex + compliance + network
 
-	if s.cfg.MinFee > 0 && total < s.cfg.MinFee {
-		total = s.cfg.MinFee
+	minFee := int64(s.cfg.MinFee)
+	maxFee := int64(s.cfg.MaxFee)
+
+	if minFee > 0 && total < minFee {
+		total = minFee
 	}
-	if s.cfg.MaxFee > 0 && total > s.cfg.MaxFee {
-		total = s.cfg.MaxFee
+	if maxFee > 0 && total > maxFee {
+		total = maxFee
 	}
 
-	// When min/max clamps apply, preserve relative components but keep total stable.
-	// If no clamp applied, the sum equals total already.
 	sum := platform + forex + compliance + network
 	if sum > 0 && total != sum {
-		ratio := total / sum
-		platform *= ratio
-		forex *= ratio
-		compliance *= ratio
-		network *= ratio
+		platform = (platform * total) / sum
+		forex = (forex * total) / sum
+		compliance = (compliance * total) / sum
+		network = total - (platform + forex + compliance)
 	}
 
 	return FeeBreakdown{
-		PlatformFee:   roundMoney(platform),
-		ForexFee:      roundMoney(forex),
-		ComplianceFee: roundMoney(compliance),
-		NetworkFee:    roundMoney(network),
-		TotalFee:      roundMoney(total),
+		PlatformFee:   platform,
+		ForexFee:      forex,
+		ComplianceFee: compliance,
+		NetworkFee:    network,
+		TotalFee:      total,
 	}
 }

@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/yourusername/gpay-remit/config"
-	"github.com/yourusername/gpay-remit/utils"
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/utils"
 )
 
 // Claims represents the JWT claims

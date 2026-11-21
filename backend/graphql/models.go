@@ -29,11 +29,11 @@ type PaymentGQL struct {
 	SenderAccount    string  `json:"senderAccount"`
 	RecipientID      string  `json:"recipientId"`
 	RecipientAccount string  `json:"recipientAccount"`
-	Amount           float64 `json:"amount"`
+	Amount           int64   `json:"amount"`
 	Currency         string  `json:"currency"`
 	Status           string  `json:"status"`
 	TxHash           string  `json:"txHash,omitempty"`
-	Fee              float64 `json:"fee,omitempty"`
+	Fee              int64   `json:"fee,omitempty"`
 	CreatedAt        string  `json:"createdAt"`
 }
 
@@ -55,7 +55,7 @@ type CreateContactInput struct {
 type CreatePaymentInput struct {
 	SenderAccount    string  `json:"senderAccount"`
 	RecipientAccount string  `json:"recipientAccount"`
-	Amount           float64 `json:"amount"`
+	Amount           int64   `json:"amount"`
 	Currency         string  `json:"currency"`
 }
 

@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jung-kurt/gofpdf"
-	"github.com/yourusername/gpay-remit/errors"
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/errors"
+	"github.com/Gpay-Remit/gpay-remit/models"
 	"gorm.io/gorm"
 )
 
@@ -136,16 +136,16 @@ func (h *ExportHandler) exportCSV(c *gin.Context, payments []models.Payment) {
 			payment.SenderAccount,
 			fmt.Sprintf("%d", payment.RecipientID),
 			payment.RecipientAccount,
-			fmt.Sprintf("%.2f", payment.Amount),
+			fmt.Sprintf("%.2f", float64(payment.Amount)/100.0),
 			payment.Currency,
 			payment.TargetCurrency,
-			fmt.Sprintf("%.2f", payment.ConvertedAmount),
+			fmt.Sprintf("%.2f", float64(payment.ConvertedAmount)/100.0),
 			payment.Status,
-			fmt.Sprintf("%.4f", payment.Fee),
-			fmt.Sprintf("%.4f", payment.PlatformFee),
-			fmt.Sprintf("%.4f", payment.ForexFee),
-			fmt.Sprintf("%.4f", payment.ComplianceFee),
-			fmt.Sprintf("%.4f", payment.NetworkFee),
+			fmt.Sprintf("%.4f", float64(payment.Fee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.PlatformFee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.ForexFee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.ComplianceFee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.NetworkFee)/100.0),
 			payment.TxHash,
 			payment.EscrowID,
 			payment.Notes,
@@ -233,13 +233,13 @@ func (h *ExportHandler) exportPDF(c *gin.Context, payments []models.Payment) {
 			payment.CreatedAt.Format("2006-01-02"),
 			fmt.Sprintf("%d", payment.SenderID),
 			fmt.Sprintf("%d", payment.RecipientID),
-			fmt.Sprintf("%.2f %s", payment.Amount, payment.Currency),
+			fmt.Sprintf("%.2f %s", float64(payment.Amount)/100.0, payment.Currency),
 			payment.Status,
-			fmt.Sprintf("%.4f", payment.Fee),
-			fmt.Sprintf("%.4f", payment.PlatformFee),
-			fmt.Sprintf("%.4f", payment.ForexFee),
-			fmt.Sprintf("%.4f", payment.ComplianceFee),
-			fmt.Sprintf("%.4f", payment.NetworkFee),
+			fmt.Sprintf("%.4f", float64(payment.Fee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.PlatformFee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.ForexFee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.ComplianceFee)/100.0),
+			fmt.Sprintf("%.4f", float64(payment.NetworkFee)/100.0),
 			txHash,
 			notes,
 		}
@@ -271,7 +271,7 @@ func (h *ExportHandler) exportPDF(c *gin.Context, payments []models.Payment) {
 
 	pdf.SetFont("Arial", "", 9)
 	
-	var totalAmount, totalFees float64
+	var totalAmount, totalFees int64
 	statusCounts := make(map[string]int)
 	
 	for _, p := range payments {
@@ -280,9 +280,9 @@ func (h *ExportHandler) exportPDF(c *gin.Context, payments []models.Payment) {
 		statusCounts[p.Status]++
 	}
 
-	pdf.Cell(0, 6, fmt.Sprintf("Total Transaction Amount: %.2f", totalAmount))
+	pdf.Cell(0, 6, fmt.Sprintf("Total Transaction Amount: %.2f", float64(totalAmount)/100.0))
 	pdf.Ln(6)
-	pdf.Cell(0, 6, fmt.Sprintf("Total Fees Collected: %.4f", totalFees))
+	pdf.Cell(0, 6, fmt.Sprintf("Total Fees Collected: %.4f", float64(totalFees)/100.0))
 	pdf.Ln(6)
 	
 	pdf.Cell(0, 6, "Status Breakdown:")

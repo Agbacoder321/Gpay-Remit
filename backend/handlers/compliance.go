@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/gpay-remit/errors"
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/errors"
+	"github.com/Gpay-Remit/gpay-remit/models"
 	"gorm.io/gorm"
 )
 
@@ -92,7 +92,7 @@ func (h *ComplianceHandler) GenerateComplianceReport(c *gin.Context) {
 			p.CreatedAt.Format(time.RFC3339),
 			fmt.Sprintf("%d", p.SenderID),
 			fmt.Sprintf("%d", p.RecipientID),
-			fmt.Sprintf("%.2f", p.Amount),
+			fmt.Sprintf("%.2f", float64(p.Amount)/100.0),
 			p.Currency,
 			p.Status,
 			flag,

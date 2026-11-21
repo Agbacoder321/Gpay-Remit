@@ -1,4 +1,4 @@
-module github.com/yourusername/gpay-remit
+module github.com/Gpay-Remit/gpay-remit
 
 go 1.25.0
 

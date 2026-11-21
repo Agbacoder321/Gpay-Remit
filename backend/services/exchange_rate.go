@@ -1,20 +1,25 @@
 package services
 
 import (
+	"math"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/yourusername/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/config"
 )
+
+const RateScale = 1000000 // 1e6 scale for integer-scaled rates
 
 // ExchangeRate is the normalized response returned to API consumers.
 type ExchangeRate struct {
 	From      string    `json:"from"`
 	To        string    `json:"to"`
-	Rate      float64   `json:"rate"`
+	Rate      int64     `json:"rate"`       // Integer-scaled rate (rate * 1,000,000)
+	RateFloat float64   `json:"rate_float"` // Decimal rate for reference
+	Scale     int64     `json:"scale"`      // Scale multiplier (1,000,000)
 	Timestamp time.Time `json:"timestamp"`
 	Source    string    `json:"source"`
 }
@@ -67,10 +72,13 @@ func (s *ExchangeRateService) GetRate(from, to string) (*ExchangeRate, error) {
 		return nil, fmt.Errorf("no rate available for %s -> %s", from, to)
 	}
 
+	scaledRate := int64(math.Round(rate * float64(RateScale)))
 	return &ExchangeRate{
 		From:      from,
 		To:        to,
-		Rate:      rate,
+		Rate:      scaledRate,
+		RateFloat: rate,
+		Scale:     RateScale,
 		Timestamp: time.Now(),
 		Source:    s.baseURL,
 	}, nil

@@ -12,7 +12,7 @@ import (
 	"unicode"
 
 	"github.com/pquerna/otp/totp"
-	"github.com/yourusername/gpay-remit/encryption"
+	"github.com/Gpay-Remit/gpay-remit/encryption"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )

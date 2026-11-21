@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/models"
 )
 
 func TestNewEmailService(t *testing.T) {
@@ -29,10 +29,10 @@ func TestSendPaymentCompletedEmail_DisabledService(t *testing.T) {
 	
 	payment := &models.Payment{
 		ID:               1,
-		Amount:           100.50,
+		Amount:           10050,
 		Currency:         "USD",
 		RecipientAccount: "RECIPIENT123",
-		Fee:              2.5,
+		Fee:              250,
 		Status:           "completed",
 		CreatedAt:        time.Now(),
 	}
@@ -53,10 +53,10 @@ func TestSendPaymentCompletedEmail_UserOptedOut(t *testing.T) {
 	
 	payment := &models.Payment{
 		ID:               1,
-		Amount:           100.50,
+		Amount:           10050,
 		Currency:         "USD",
 		RecipientAccount: "RECIPIENT123",
-		Fee:              2.5,
+		Fee:              250,
 		Status:           "completed",
 		CreatedAt:        time.Now(),
 	}
@@ -77,7 +77,7 @@ func TestSendEscrowExpirationWarningEmail_UserOptedOut(t *testing.T) {
 	
 	payment := &models.Payment{
 		ID:               1,
-		Amount:           100.50,
+		Amount:           10050,
 		Currency:         "USD",
 		RecipientAccount: "RECIPIENT123",
 		EscrowID:         "ESCROW123",
@@ -99,7 +99,7 @@ func TestSendPaymentFailedEmail_UserOptedOut(t *testing.T) {
 	
 	payment := &models.Payment{
 		ID:               1,
-		Amount:           100.50,
+		Amount:           10050,
 		Currency:         "USD",
 		RecipientAccount: "RECIPIENT123",
 		CreatedAt:        time.Now(),
@@ -120,10 +120,10 @@ func TestEmailTemplateGeneration(t *testing.T) {
 	
 	payment := &models.Payment{
 		ID:               123,
-		Amount:           250.75,
+		Amount:           25075,
 		Currency:         "USD",
 		RecipientAccount: "GABCDEFG123456",
-		Fee:              5.25,
+		Fee:              525,
 		Status:           "completed",
 		EscrowID:         "ESC789",
 		CreatedAt:        time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),

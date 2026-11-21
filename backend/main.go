@@ -12,16 +12,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/gpay-remit/config"
-	"github.com/yourusername/gpay-remit/graphql"
-	"github.com/yourusername/gpay-remit/handlers"
-	"github.com/yourusername/gpay-remit/models"
-	"github.com/yourusername/gpay-remit/logger"
-	"github.com/yourusername/gpay-remit/metrics"
-	"github.com/yourusername/gpay-remit/middleware"
-	"github.com/yourusername/gpay-remit/services"
-	"github.com/yourusername/gpay-remit/utils"
-	"github.com/yourusername/gpay-remit/workers"
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/graphql"
+	"github.com/Gpay-Remit/gpay-remit/handlers"
+	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/logger"
+	"github.com/Gpay-Remit/gpay-remit/metrics"
+	"github.com/Gpay-Remit/gpay-remit/middleware"
+	"github.com/Gpay-Remit/gpay-remit/services"
+	"github.com/Gpay-Remit/gpay-remit/utils"
+	"github.com/Gpay-Remit/gpay-remit/workers"
 )
 
 // shuttingDown signals goroutines to stop when a shutdown signal is received

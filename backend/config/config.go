@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/golang-jwt/jwt/v5"
 	"context"
 	"database/sql"
 	"fmt"
@@ -15,8 +16,8 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/yourusername/gpay-remit/logger"
-	"github.com/yourusername/gpay-remit/secrets"
+	"github.com/Gpay-Remit/gpay-remit/logger"
+	"github.com/Gpay-Remit/gpay-remit/secrets"
 )
 
 var connectionPoolMonitor = struct {
@@ -115,6 +116,34 @@ type Config struct {
 	SandboxMode bool
 }
 
+
+// validateJWTSelfTest signs and verifies a test JWT token to ensure the key is functional at startup (#333).
+func validateJWTSelfTest(secret string) error {
+	if len(secret) < 32 {
+		return fmt.Errorf("jwt secret must be at least 32 characters long, got %d", len(secret))
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "startup-selftest",
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(time.Minute).Unix(),
+	})
+	tokenString, err := token.SignedString([]byte(secret))
+	if err != nil {
+		return fmt.Errorf("jwt signing self-test failed: %w", err)
+	}
+
+	parsed, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return []byte(secret), nil
+	})
+	if err != nil || !parsed.Valid {
+		return fmt.Errorf("jwt verification self-test failed: %w", err)
+	}
+	return nil
+}
+
 func LoadConfig() (*Config, error) {
 	godotenv.Load()
 
@@ -144,6 +173,14 @@ func LoadConfig() (*Config, error) {
 	}
 	if len(jwtRefreshSecret) < 32 {
 		return nil, fmt.Errorf("JWT_REFRESH_SECRET must be at least 32 characters long")
+	}
+
+	// Startup self-test for JWT secrets (#333)
+	if err := validateJWTSelfTest(jwtSecret); err != nil {
+		return nil, fmt.Errorf("JWT_SECRET self-test failed: %w", err)
+	}
+	if err := validateJWTSelfTest(jwtRefreshSecret); err != nil {
+		return nil, fmt.Errorf("JWT_REFRESH_SECRET self-test failed: %w", err)
 	}
 
 	sandbox := getEnvOrDefault("SANDBOX_MODE", "false") == "true"
