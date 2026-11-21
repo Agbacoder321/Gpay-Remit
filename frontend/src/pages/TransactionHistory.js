@@ -1,5 +1,6 @@
 import { formatMinorUnits } from '../utils/currency';
 // #112 — transaction history page with filtering and detail view.
+// #358 — pagination controls with total count and current page indicator.
 import React, { useState, useCallback } from "react";
 import { getRemittances } from "../services/api";
 import { usePolling } from "../hooks/usePolling";
@@ -11,6 +12,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 function TransactionHistory() {
   const [transactions, setTransactions] = useState([]);
+  const [totalCount, setTotalCount] = useState(null); // null = unknown
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -23,7 +25,16 @@ function TransactionHistory() {
     setLoading(true);
     try {
       const response = await getRemittances(targetPage, targetPageSize);
-      setTransactions(response.data);
+
+      // Handle both paginated shape { data: [], total: N } and plain array
+      if (response.data && typeof response.data === "object" && !Array.isArray(response.data)) {
+        setTransactions(response.data.data ?? []);
+        setTotalCount(typeof response.data.total === "number" ? response.data.total : null);
+      } else {
+        setTransactions(response.data ?? []);
+        setTotalCount(null);
+      }
+
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || "Failed to load transactions.");
@@ -35,11 +46,16 @@ function TransactionHistory() {
   // Poll every 10 s for real-time updates (#113).
   usePolling(fetchTransactions, 10_000);
 
-  const hasNextPage = transactions.length === pageSize;
+  const hasNextPage =
+    totalCount !== null
+      ? page * pageSize < totalCount
+      : transactions.length === pageSize;
   const hasPrevPage = page > 1;
+  const totalPages = totalCount !== null ? Math.ceil(totalCount / pageSize) : null;
 
   const goToPage = (newPage) => {
     if (newPage < 1) return;
+    if (totalPages !== null && newPage > totalPages) return;
     setPage(newPage);
     fetchTransactions(newPage, pageSize);
   };
@@ -60,6 +76,9 @@ function TransactionHistory() {
       String(tx.recipient_id).includes(term);
     return matchesStatus && matchesSearch;
   });
+
+  const pageStart = (page - 1) * pageSize + 1;
+  const pageEnd = Math.min(page * pageSize, totalCount ?? page * pageSize);
 
   return (
     <main className="transaction-history" aria-label="Transaction history">
@@ -155,7 +174,14 @@ function TransactionHistory() {
       {!error && (
         <div className="tx-pagination" role="navigation" aria-label="Transaction pagination">
           <span className="tx-pagination-status" aria-live="polite">
-            Page {page} · {transactions.length} result{transactions.length === 1 ? "" : "s"}
+            {totalCount !== null ? (
+              <>
+                {pageStart}–{pageEnd} of {totalCount.toLocaleString()} transaction{totalCount === 1 ? "" : "s"}
+                {totalPages !== null && <> · Page {page} of {totalPages}</>}
+              </>
+            ) : (
+              <>Page {page} · {transactions.length} result{transactions.length === 1 ? "" : "s"}</>
+            )}
           </span>
 
           <label htmlFor="tx-page-size" className="sr-only">
@@ -183,6 +209,23 @@ function TransactionHistory() {
           >
             Previous
           </button>
+
+          {/* Jump-to-page buttons when total pages is known and manageable */}
+          {totalPages !== null && totalPages <= 7 &&
+            Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => goToPage(p)}
+                disabled={loading}
+                aria-current={p === page ? "page" : undefined}
+                className={p === page ? "active" : ""}
+                aria-label={`Page ${p}`}
+              >
+                {p}
+              </button>
+            ))}
+
           <button
             type="button"
             onClick={() => goToPage(page + 1)}
