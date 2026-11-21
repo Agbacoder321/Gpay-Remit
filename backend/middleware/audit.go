@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -100,12 +100,13 @@ func AuditTrail(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		log := models.AuditLog{
-			UserID:    userID,
-			Action:    method,
-			Resource:  resource,
-			OldValue:  normalizeJSONB(oldStr),
-			NewValue:  normalizeJSONB(newStr),
-			IPAddress: c.ClientIP(),
+			UserID:         userID,
+			Action:         method,
+			Resource:       resource,
+			OldValue:       normalizeJSONB(oldStr),
+			NewValue:       normalizeJSONB(newStr),
+			IPAddress:      c.ClientIP(),
+			ResponseStatus: c.Writer.Status(),
 		}
 
 		_ = db.Create(&log).Error
