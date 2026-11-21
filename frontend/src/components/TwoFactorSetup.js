@@ -3,9 +3,11 @@
 
 import React, { useState, useEffect } from "react";
 import { setupMFA, verifyMFA, disableMFA, getMFAStatus } from "../services/api";
+import LoadingSpinner from "./LoadingSpinner";
 
 function TwoFactorSetup() {
   const [mfaEnabled, setMfaEnabled] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(true); // initial fetch loading
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [secret, setSecret] = useState("");
@@ -13,14 +15,17 @@ function TwoFactorSetup() {
   const [step, setStep] = useState("idle"); // idle | setup | verify | done
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // action loading (setup/verify/disable)
 
   const fetchStatus = async () => {
+    setStatusLoading(true);
     try {
       const res = await getMFAStatus();
       setMfaEnabled(res.data.mfa_enabled);
     } catch {
       setMfaEnabled(false);
+    } finally {
+      setStatusLoading(false);
     }
   };
 
@@ -84,8 +89,12 @@ function TwoFactorSetup() {
     }
   };
 
-  if (mfaEnabled === null) {
-    return <div aria-busy="true">Loading 2FA status…</div>;
+  if (statusLoading) {
+    return (
+      <div className="two-factor-setup two-factor-setup--loading" aria-busy="true" aria-label="Loading 2FA status">
+        <LoadingSpinner label="Loading 2FA status…" size={24} />
+      </div>
+    );
   }
 
   return (
@@ -117,6 +126,7 @@ function TwoFactorSetup() {
             required
             aria-required="true"
             placeholder="Current password"
+            disabled={loading}
           />
           <button type="submit" disabled={loading} aria-busy={loading}>
             {loading ? "Setting up…" : "Setup 2FA"}
@@ -148,6 +158,7 @@ function TwoFactorSetup() {
               required
               aria-required="true"
               placeholder="123456"
+              disabled={loading}
             />
             <button type="submit" disabled={loading || code.length !== 6} aria-busy={loading}>
               {loading ? "Verifying…" : "Verify & Enable"}
@@ -167,6 +178,7 @@ function TwoFactorSetup() {
             required
             aria-required="true"
             placeholder="Current password"
+            disabled={loading}
           />
           <button type="submit" disabled={loading} aria-busy={loading} className="danger">
             {loading ? "Disabling…" : "Disable 2FA"}
