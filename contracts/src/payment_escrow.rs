@@ -108,6 +108,8 @@ pub enum Error {
     RateLimitExceeded = 47,
     /// Escrow is non-compliant with registered rules.
     NonCompliant = 48,
+    /// A guarded function was re-entered while an external call was in flight.
+    ReentrantCall = 49,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -503,6 +505,49 @@ pub enum DataKey {
 #[contract]
 pub struct PaymentEscrowContract;
 
+/// Reentrancy protection (defense-in-depth on top of Soroban's auth model).
+///
+/// The lock lives in temporary storage so it never outlives the invocation that
+/// set it, and it is set before any token call in deposit/release/refund/cancel
+/// and cleared once the guarded body returns (success or error).
+impl PaymentEscrowContract {
+    fn is_reentrancy_locked(env: &Env) -> bool {
+        env.storage()
+            .temporary()
+            .get::<_, bool>(&DataKey::ReentrancyGuard)
+            .unwrap_or(false)
+    }
+
+    fn ensure_not_reentrant(env: &Env) -> Result<(), Error> {
+        if Self::is_reentrancy_locked(env) {
+            return Err(Error::ReentrantCall);
+        }
+        Ok(())
+    }
+
+    fn acquire_reentrancy_lock(env: &Env) -> Result<(), Error> {
+        Self::ensure_not_reentrant(env)?;
+        env.storage()
+            .temporary()
+            .set(&DataKey::ReentrancyGuard, &true);
+        Ok(())
+    }
+
+    fn release_reentrancy_lock(env: &Env) {
+        env.storage().temporary().remove(&DataKey::ReentrancyGuard);
+    }
+
+    fn with_reentrancy_guard<T, F>(env: &Env, body: F) -> Result<T, Error>
+    where
+        F: FnOnce() -> Result<T, Error>,
+    {
+        Self::acquire_reentrancy_lock(env)?;
+        let result = body();
+        Self::release_reentrancy_lock(env);
+        result
+    }
+}
+
 #[contractimpl]
 impl PaymentEscrowContract {
     pub fn init_escrow(env: Env, admin: Address) {
@@ -524,9 +569,6 @@ impl PaymentEscrowContract {
         env.storage()
             .instance()
             .set(&DataKey::ProcessingFeePercentage, &0i128);
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &false);
         env.storage().instance().set(&DataKey::KycEnabled, &false);
 
         upgradeable::init_version(&env);
@@ -1707,6 +1749,16 @@ impl PaymentEscrowContract {
         amount: i128,
         token_address: Address,
     ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::deposit_impl(env.clone(), escrow_id, caller, amount, token_address))
+    }
+
+    fn deposit_impl(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        amount: i128,
+        token_address: Address,
+    ) -> Result<(), Error> {
         if upgradeable::is_paused(&env) {
             return Err(Error::ContractPaused);
         }
@@ -1793,6 +1845,17 @@ impl PaymentEscrowContract {
     }
 
     pub fn deposit_asset(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        asset: Asset,
+        amount: i128,
+        token_address: Address,
+    ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::deposit_asset_impl(env.clone(), escrow_id, caller, asset, amount, token_address))
+    }
+
+    fn deposit_asset_impl(
         env: Env,
         escrow_id: u64,
         caller: Address,
@@ -2311,6 +2374,7 @@ impl PaymentEscrowContract {
 
     pub fn approve_escrow(env: Env, escrow_id: u64, approver: Address) -> Result<(), Error> {
         approver.require_auth();
+        Self::ensure_not_reentrant(&env)?;
 
         let mut escrow: Escrow = env
             .storage()
@@ -2402,20 +2466,18 @@ impl PaymentEscrowContract {
         caller: Address,
         token_address: Address,
     ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::release_escrow_impl(env.clone(), escrow_id, caller, token_address))
+    }
+
+    fn release_escrow_impl(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        token_address: Address,
+    ) -> Result<(), Error> {
         caller.require_auth();
         let rate_limit_admin = Self::enforce_rate_limit(&env, &caller, FunctionType::Release)?;
 
-        let guard: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReentrancyGuard)
-            .unwrap_or(false);
-        if guard {
-            return Err(Error::UnauthorizedCaller);
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
 
         let mut escrow: Escrow = env
             .storage()
@@ -2424,23 +2486,14 @@ impl PaymentEscrowContract {
             .ok_or(Error::EscrowNotFound)?;
 
         if !escrow.compliant {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::NonCompliant);
         }
 
         if escrow.status != EscrowStatus::Approved && escrow.status != EscrowStatus::Funded {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::NotApproved);
         }
 
         if escrow.status == EscrowStatus::Released && !escrow.allow_partial_release {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::AlreadyReleased);
         }
 
@@ -2453,22 +2506,13 @@ impl PaymentEscrowContract {
                 Some(config) => {
                     let current_time = env.ledger().timestamp();
                     if config.approval_timeout > 0 && current_time > config.approval_timeout {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::ApprovalExpired);
                     }
                     if config.approvals.len() < config.required_approvals {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::QuorumNotMet);
                     }
                 }
                 None => {
-                    env.storage()
-                        .instance()
-                        .set(&DataKey::ReentrancyGuard, &false);
                     return Err(Error::QuorumNotMet);
                 }
             }
@@ -2480,9 +2524,6 @@ impl PaymentEscrowContract {
             env.storage()
                 .instance()
                 .set(&DataKey::Escrow(escrow_id), &escrow);
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::Expired);
         }
 
@@ -2491,16 +2532,10 @@ impl PaymentEscrowContract {
             None => env.storage().instance().get(&DataKey::Admin).unwrap(),
         };
         if caller != escrow.recipient && caller != stored_admin {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::Unauthorized);
         }
 
         if escrow.deposited_amount == 0 {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InsufficientFunds);
         }
 
@@ -2510,9 +2545,6 @@ impl PaymentEscrowContract {
             .ok_or(Error::ArithmeticOverflow)?;
 
         if available_amount <= 0 {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InsufficientFunds);
         }
 
@@ -2528,9 +2560,6 @@ impl PaymentEscrowContract {
             .ok_or(Error::ArithmeticOverflow)?;
 
         if recipient_amount <= 0 {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InsufficientAmount);
         }
 
@@ -2598,14 +2627,21 @@ impl PaymentEscrowContract {
             },
         );
 
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &false);
 
         Ok(())
     }
 
     pub fn release_asset(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        asset: Asset,
+        token_address: Address,
+    ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::release_asset_impl(env.clone(), escrow_id, caller, asset, token_address))
+    }
+
+    fn release_asset_impl(
         env: Env,
         escrow_id: u64,
         caller: Address,
@@ -2729,6 +2765,16 @@ impl PaymentEscrowContract {
         token_address: Address,
         release_amount: i128,
     ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::release_partial_impl(env.clone(), escrow_id, caller, token_address, release_amount))
+    }
+
+    fn release_partial_impl(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        token_address: Address,
+        release_amount: i128,
+    ) -> Result<(), Error> {
         if upgradeable::is_paused(&env) {
             return Err(Error::ContractPaused);
         }
@@ -2739,17 +2785,6 @@ impl PaymentEscrowContract {
             return Err(Error::InvalidAmount);
         }
 
-        let guard: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReentrancyGuard)
-            .unwrap_or(false);
-        if guard {
-            return Err(Error::UnauthorizedCaller);
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
 
         let mut escrow: Escrow = env
             .storage()
@@ -2758,9 +2793,6 @@ impl PaymentEscrowContract {
             .ok_or(Error::EscrowNotFound)?;
 
         if !escrow.allow_partial_release {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::PartialReleaseNotAllowed);
         }
 
@@ -2768,9 +2800,6 @@ impl PaymentEscrowContract {
             && escrow.status != EscrowStatus::Funded
             && escrow.status != EscrowStatus::Released
         {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InvalidStatus);
         }
 
@@ -2783,22 +2812,13 @@ impl PaymentEscrowContract {
                 Some(config) => {
                     let current_time = env.ledger().timestamp();
                     if config.approval_timeout > 0 && current_time > config.approval_timeout {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::ApprovalExpired);
                     }
                     if config.approvals.len() < config.required_approvals {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::QuorumNotMet);
                     }
                 }
                 None => {
-                    env.storage()
-                        .instance()
-                        .set(&DataKey::ReentrancyGuard, &false);
                     return Err(Error::QuorumNotMet);
                 }
             }
@@ -2810,9 +2830,6 @@ impl PaymentEscrowContract {
             env.storage()
                 .instance()
                 .set(&DataKey::Escrow(escrow_id), &escrow);
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::Expired);
         }
 
@@ -2821,9 +2838,6 @@ impl PaymentEscrowContract {
             None => env.storage().instance().get(&DataKey::Admin).unwrap(),
         };
         if caller != escrow.recipient && caller != stored_admin {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::UnauthorizedCaller);
         }
 
@@ -2833,9 +2847,6 @@ impl PaymentEscrowContract {
             .ok_or(Error::ArithmeticOverflow)?;
 
         if release_amount > available_amount {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InsufficientFunds);
         }
 
@@ -2905,9 +2916,6 @@ impl PaymentEscrowContract {
             EventData::EscrowReleased(escrow_id, recipient_amount),
         );
 
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &false);
 
         Ok(())
     }
@@ -3208,23 +3216,22 @@ impl PaymentEscrowContract {
         token_address: Address,
         reason: RefundReason,
     ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::refund_escrow_impl(env.clone(), escrow_id, caller, token_address, reason))
+    }
+
+    fn refund_escrow_impl(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        token_address: Address,
+        reason: RefundReason,
+    ) -> Result<(), Error> {
         if upgradeable::is_paused(&env) {
             return Err(Error::ContractPaused);
         }
         caller.require_auth();
         let rate_limit_admin = Self::enforce_rate_limit(&env, &caller, FunctionType::Refund)?;
 
-        let guard: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReentrancyGuard)
-            .unwrap_or(false);
-        if guard {
-            return Err(Error::UnauthorizedCaller);
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
 
         let mut escrow: Escrow = env
             .storage()
@@ -3237,23 +3244,14 @@ impl PaymentEscrowContract {
             None => env.storage().instance().get(&DataKey::Admin).unwrap(),
         };
         if caller != escrow.sender && caller != stored_admin {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::UnauthorizedRefund);
         }
 
         if escrow.status == EscrowStatus::Released {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::AlreadyReleased);
         }
 
         if escrow.status == EscrowStatus::Refunded {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::AlreadyRefunded);
         }
 
@@ -3261,9 +3259,6 @@ impl PaymentEscrowContract {
             && escrow.status != EscrowStatus::Funded
             && escrow.status != EscrowStatus::Approved
         {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InvalidStatus);
         }
 
@@ -3276,22 +3271,13 @@ impl PaymentEscrowContract {
                 Some(config) => {
                     let now = env.ledger().timestamp();
                     if config.approval_timeout > 0 && now > config.approval_timeout {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::ApprovalExpired);
                     }
                     if config.approvals.len() < config.required_approvals {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::QuorumNotMet);
                     }
                 }
                 None => {
-                    env.storage()
-                        .instance()
-                        .set(&DataKey::ReentrancyGuard, &false);
                     return Err(Error::QuorumNotMet);
                 }
             }
@@ -3301,9 +3287,6 @@ impl PaymentEscrowContract {
 
         if reason == RefundReason::Expiration {
             if current_time <= escrow.release_conditions.expiration_timestamp {
-                env.storage()
-                    .instance()
-                    .set(&DataKey::ReentrancyGuard, &false);
                 return Err(Error::NotExpired);
             }
         }
@@ -3316,9 +3299,6 @@ impl PaymentEscrowContract {
             .ok_or(Error::ArithmeticOverflow)?;
 
         if available_for_refund <= 0 {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::NoFundsAvailable);
         }
 
@@ -3399,14 +3379,22 @@ impl PaymentEscrowContract {
             },
         );
 
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &false);
 
         Ok(())
     }
 
     pub fn refund_asset(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        asset: Asset,
+        token_address: Address,
+        reason: RefundReason,
+    ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::refund_asset_impl(env.clone(), escrow_id, caller, asset, token_address, reason))
+    }
+
+    fn refund_asset_impl(
         env: Env,
         escrow_id: u64,
         caller: Address,
@@ -3553,6 +3541,17 @@ impl PaymentEscrowContract {
         caller: Address,
         token_address: Address,
         refund_amount: i128,
+        reason: RefundReason,
+    ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::refund_partial_impl(env.clone(), escrow_id, caller, token_address, refund_amount, reason))
+    }
+
+    fn refund_partial_impl(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        token_address: Address,
+        refund_amount: i128,
         _reason: RefundReason,
     ) -> Result<(), Error> {
         if upgradeable::is_paused(&env) {
@@ -3565,17 +3564,6 @@ impl PaymentEscrowContract {
             return Err(Error::InvalidRefundAmount);
         }
 
-        let guard: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReentrancyGuard)
-            .unwrap_or(false);
-        if guard {
-            return Err(Error::UnauthorizedCaller);
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
 
         let mut escrow: Escrow = env
             .storage()
@@ -3588,16 +3576,10 @@ impl PaymentEscrowContract {
             None => env.storage().instance().get(&DataKey::Admin).unwrap(),
         };
         if caller != escrow.sender && caller != stored_admin {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::UnauthorizedRefund);
         }
 
         if escrow.status == EscrowStatus::Released {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::AlreadyReleased);
         }
 
@@ -3606,9 +3588,6 @@ impl PaymentEscrowContract {
             && escrow.status != EscrowStatus::Approved
             && escrow.status != EscrowStatus::Refunded
         {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InvalidStatus);
         }
 
@@ -3621,22 +3600,13 @@ impl PaymentEscrowContract {
                 Some(config) => {
                     let now = env.ledger().timestamp();
                     if config.approval_timeout > 0 && now > config.approval_timeout {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::ApprovalExpired);
                     }
                     if config.approvals.len() < config.required_approvals {
-                        env.storage()
-                            .instance()
-                            .set(&DataKey::ReentrancyGuard, &false);
                         return Err(Error::QuorumNotMet);
                     }
                 }
                 None => {
-                    env.storage()
-                        .instance()
-                        .set(&DataKey::ReentrancyGuard, &false);
                     return Err(Error::QuorumNotMet);
                 }
             }
@@ -3650,9 +3620,6 @@ impl PaymentEscrowContract {
             .ok_or(Error::ArithmeticOverflow)?;
 
         if refund_amount > available_for_refund {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::InsufficientFunds);
         }
 
@@ -3728,9 +3695,6 @@ impl PaymentEscrowContract {
             EventData::EscrowRefunded(escrow_id, net_refund),
         );
 
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &false);
 
         Ok(())
     }
@@ -3775,36 +3739,29 @@ impl PaymentEscrowContract {
         token_address: Address,
         reason: String,
     ) -> Result<(), Error> {
+        Self::with_reentrancy_guard(&env, || Self::cancel_escrow_impl(env.clone(), escrow_id, caller, token_address, reason))
+    }
+
+    fn cancel_escrow_impl(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        token_address: Address,
+        reason: String,
+    ) -> Result<(), Error> {
         caller.require_auth();
 
-        let guard: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReentrancyGuard)
-            .unwrap_or(false);
-        if guard {
-            return Err(Error::UnauthorizedCaller);
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
 
         let mut escrow: Escrow = env
             .storage()
             .instance()
             .get(&DataKey::Escrow(escrow_id))
             .ok_or({
-                env.storage()
-                    .instance()
-                    .set(&DataKey::ReentrancyGuard, &false);
                 Error::EscrowNotFound
             })?;
 
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         if caller != escrow.sender && caller != stored_admin {
-            env.storage()
-                .instance()
-                .set(&DataKey::ReentrancyGuard, &false);
             return Err(Error::Unauthorized);
         }
 
@@ -3813,9 +3770,6 @@ impl PaymentEscrowContract {
             | EscrowStatus::Refunded
             | EscrowStatus::Expired
             | EscrowStatus::Cancelled => {
-                env.storage()
-                    .instance()
-                    .set(&DataKey::ReentrancyGuard, &false);
                 return Err(Error::InvalidStatus);
             }
             _ => {}
@@ -3889,9 +3843,6 @@ impl PaymentEscrowContract {
             EventData::AdminAction(symbol_short!("cancel")),
         );
 
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &false);
 
         Ok(())
     }
@@ -7270,5 +7221,342 @@ mod test {
         let result =
             client.try_raise_dispute(&escrow_id, &sender, &DisputeReason::Fraud, &evidence_hash);
         assert_eq!(result, Err(Ok(Error::AlreadyDisputed)));
+    }
+}
+
+#[cfg(test)]
+mod reentrancy_test {
+    use super::*;
+    use soroban_sdk::{
+        contract, contractimpl, contracttype,
+        testutils::{Address as _, Ledger},
+    };
+
+    const REENTRY_NONE: u32 = 0;
+    const REENTRY_RELEASE: u32 = 1;
+    const REENTRY_REFUND: u32 = 2;
+    const REENTRY_SUCCEEDED: u32 = u32::MAX;
+    const REENTRY_HOST_BLOCKED: u32 = u32::MAX - 1;
+
+    #[derive(Clone)]
+    #[contracttype]
+    enum MockKey {
+        Balance(Address),
+        Escrow,
+        EscrowId,
+        Caller,
+        Mode,
+        Attempts,
+        LastResult,
+    }
+
+    /// Minimal token whose `transfer` tries to call back into the escrow.
+    #[contract]
+    pub struct ReentrantToken;
+
+    #[contractimpl]
+    impl ReentrantToken {
+        pub fn mint(env: Env, to: Address, amount: i128) {
+            let bal: i128 = env
+                .storage()
+                .instance()
+                .get(&MockKey::Balance(to.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&MockKey::Balance(to), &(bal + amount));
+        }
+
+        pub fn balance(env: Env, id: Address) -> i128 {
+            env.storage()
+                .instance()
+                .get(&MockKey::Balance(id))
+                .unwrap_or(0)
+        }
+
+        pub fn arm(env: Env, escrow: Address, escrow_id: u64, caller: Address, mode: u32) {
+            env.storage().instance().set(&MockKey::Escrow, &escrow);
+            env.storage().instance().set(&MockKey::EscrowId, &escrow_id);
+            env.storage().instance().set(&MockKey::Caller, &caller);
+            env.storage().instance().set(&MockKey::Mode, &mode);
+        }
+
+        pub fn attempts(env: Env) -> u32 {
+            env.storage().instance().get(&MockKey::Attempts).unwrap_or(0)
+        }
+
+        pub fn last_result(env: Env) -> Option<u32> {
+            env.storage().instance().get(&MockKey::LastResult)
+        }
+
+        pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+            let from_bal: i128 = env
+                .storage()
+                .instance()
+                .get(&MockKey::Balance(from.clone()))
+                .unwrap_or(0);
+            if from_bal < amount {
+                panic!("insufficient balance");
+            }
+            let to_bal: i128 = env
+                .storage()
+                .instance()
+                .get(&MockKey::Balance(to.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&MockKey::Balance(from), &(from_bal - amount));
+            env.storage()
+                .instance()
+                .set(&MockKey::Balance(to), &(to_bal + amount));
+
+            let mode: u32 = env
+                .storage()
+                .instance()
+                .get(&MockKey::Mode)
+                .unwrap_or(REENTRY_NONE);
+            if mode == REENTRY_NONE {
+                return;
+            }
+            // Disarm before re-entering so the attack is attempted once.
+            env.storage().instance().set(&MockKey::Mode, &REENTRY_NONE);
+            let attempts: u32 = env
+                .storage()
+                .instance()
+                .get(&MockKey::Attempts)
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&MockKey::Attempts, &(attempts + 1));
+
+            let escrow: Address = env.storage().instance().get(&MockKey::Escrow).unwrap();
+            let escrow_id: u64 = env.storage().instance().get(&MockKey::EscrowId).unwrap();
+            let caller: Address = env.storage().instance().get(&MockKey::Caller).unwrap();
+            let client = PaymentEscrowContractClient::new(&env, &escrow);
+            let token = env.current_contract_address();
+
+            let outcome = if mode == REENTRY_RELEASE {
+                match client.try_release_escrow(&escrow_id, &caller, &token) {
+                    Ok(_) => REENTRY_SUCCEEDED,
+                    Err(Ok(e)) => e as u32,
+                    Err(Err(_)) => REENTRY_HOST_BLOCKED,
+                }
+            } else {
+                match client.try_refund_escrow(
+                    &escrow_id,
+                    &caller,
+                    &token,
+                    &RefundReason::SenderRequest,
+                ) {
+                    Ok(_) => REENTRY_SUCCEEDED,
+                    Err(Ok(e)) => e as u32,
+                    Err(Err(_)) => REENTRY_HOST_BLOCKED,
+                }
+            };
+            env.storage().instance().set(&MockKey::LastResult, &outcome);
+        }
+    }
+
+    struct Setup<'a> {
+        env: Env,
+        client: PaymentEscrowContractClient<'a>,
+        token: ReentrantTokenClient<'a>,
+        escrow_contract: Address,
+        admin: Address,
+        sender: Address,
+        recipient: Address,
+        asset: Asset,
+    }
+
+    fn setup<'a>() -> Setup<'a> {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|li| li.timestamp = 1000);
+
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let escrow_contract = env.register_contract(None, PaymentEscrowContract);
+        let client = PaymentEscrowContractClient::new(&env, &escrow_contract);
+        client.init_escrow(&admin);
+
+        let token_id = env.register_contract(None, ReentrantToken);
+        let token = ReentrantTokenClient::new(&env, &token_id);
+        token.mint(&sender, &5000);
+
+        let asset = Asset {
+            code: String::from_str(&env, "USDC"),
+            issuer: admin.clone(),
+        };
+        client.add_supported_asset(&admin, &asset);
+
+        Setup {
+            env,
+            client,
+            token,
+            escrow_contract,
+            admin,
+            sender,
+            recipient,
+            asset,
+        }
+    }
+
+    fn funded_escrow(s: &Setup) -> u64 {
+        let id = s.client.create_escrow(
+            &s.sender,
+            &s.recipient,
+            &1000,
+            &s.asset,
+            &2000,
+            &String::from_str(&s.env, "reentrancy"),
+        );
+        s.client.deposit(&id, &s.sender, &1000, &s.token.address);
+        id
+    }
+
+    fn lock_is_set(s: &Setup) -> bool {
+        s.env.as_contract(&s.escrow_contract, || {
+            PaymentEscrowContract::is_reentrancy_locked(&s.env)
+        })
+    }
+
+    fn set_lock(s: &Setup) {
+        s.env.as_contract(&s.escrow_contract, || {
+            s.env
+                .storage()
+                .temporary()
+                .set(&DataKey::ReentrancyGuard, &true);
+        });
+    }
+
+    #[test]
+    fn test_guarded_calls_rejected_while_lock_set() {
+        let s = setup();
+        let id = funded_escrow(&s);
+        set_lock(&s);
+
+        assert_eq!(
+            s.client.try_release_escrow(&id, &s.recipient, &s.token.address),
+            Err(Ok(Error::ReentrantCall))
+        );
+        assert_eq!(
+            s.client.try_refund_escrow(
+                &id,
+                &s.sender,
+                &s.token.address,
+                &RefundReason::SenderRequest
+            ),
+            Err(Ok(Error::ReentrantCall))
+        );
+        assert_eq!(
+            s.client.try_release_partial(&id, &s.recipient, &s.token.address, &100),
+            Err(Ok(Error::ReentrantCall))
+        );
+        assert_eq!(
+            s.client
+                .try_refund_partial(&id, &s.sender, &s.token.address, &100, &RefundReason::SenderRequest),
+            Err(Ok(Error::ReentrantCall))
+        );
+        assert_eq!(
+            s.client.try_deposit(&id, &s.sender, &1, &s.token.address),
+            Err(Ok(Error::ReentrantCall))
+        );
+        assert_eq!(
+            s.client.try_approve_escrow(&id, &s.admin),
+            Err(Ok(Error::ReentrantCall))
+        );
+
+        // Nothing moved while the lock was held.
+        assert_eq!(s.token.balance(&s.escrow_contract), 1000);
+        assert_eq!(s.token.balance(&s.recipient), 0);
+    }
+
+    #[test]
+    fn test_lock_cleared_after_successful_call() {
+        let s = setup();
+        let id = funded_escrow(&s);
+        assert!(!lock_is_set(&s));
+
+        s.client.approve_escrow(&id, &s.admin);
+        s.client.release_escrow(&id, &s.recipient, &s.token.address);
+        assert!(!lock_is_set(&s));
+
+        // A follow-up guarded call is not blocked by a stale flag.
+        let second = funded_escrow(&s);
+        assert!(!lock_is_set(&s));
+        assert_eq!(
+            s.client.get_escrow(&second).unwrap().status,
+            EscrowStatus::Funded
+        );
+    }
+
+    #[test]
+    fn test_lock_cleared_after_failed_call() {
+        let s = setup();
+        assert_eq!(
+            s.client.try_release_escrow(&999, &s.recipient, &s.token.address),
+            Err(Ok(Error::EscrowNotFound))
+        );
+        assert!(!lock_is_set(&s));
+
+        let id = funded_escrow(&s);
+        s.client.approve_escrow(&id, &s.admin);
+        s.client.release_escrow(&id, &s.recipient, &s.token.address);
+        assert_eq!(s.token.balance(&s.recipient), 1000);
+    }
+
+    #[test]
+    fn test_reentrant_token_cannot_double_release() {
+        let s = setup();
+        let id = funded_escrow(&s);
+        s.client.approve_escrow(&id, &s.admin);
+
+        s.token
+            .arm(&s.escrow_contract, &id, &s.recipient, &REENTRY_RELEASE);
+        s.client.release_escrow(&id, &s.recipient, &s.token.address);
+
+        assert_eq!(s.token.attempts(), 1);
+        let result = s.token.last_result().unwrap();
+        assert_ne!(result, REENTRY_SUCCEEDED);
+        assert!(result == Error::ReentrantCall as u32 || result == REENTRY_HOST_BLOCKED);
+
+        // Recipient was paid exactly once and the escrow holds nothing extra.
+        assert_eq!(s.token.balance(&s.recipient), 1000);
+        assert_eq!(s.token.balance(&s.escrow_contract), 0);
+        let escrow = s.client.get_escrow(&id).unwrap();
+        assert_eq!(escrow.status, EscrowStatus::Released);
+        assert_eq!(escrow.released_amount, 1000);
+        assert!(!lock_is_set(&s));
+    }
+
+    #[test]
+    fn test_reentrant_token_cannot_double_refund() {
+        let s = setup();
+        let id = funded_escrow(&s);
+        s.env.ledger().with_mut(|li| li.timestamp = 2500);
+
+        s.token
+            .arm(&s.escrow_contract, &id, &s.sender, &REENTRY_REFUND);
+        s.client.refund_escrow(
+            &id,
+            &s.sender,
+            &s.token.address,
+            &RefundReason::Expiration,
+        );
+
+        assert_eq!(s.token.attempts(), 1);
+        let result = s.token.last_result().unwrap();
+        assert_ne!(result, REENTRY_SUCCEEDED);
+        assert!(result == Error::ReentrantCall as u32 || result == REENTRY_HOST_BLOCKED);
+
+        // Sender got back exactly the deposited 1000, not 2000.
+        assert_eq!(s.token.balance(&s.sender), 5000);
+        assert_eq!(s.token.balance(&s.escrow_contract), 0);
+        let escrow = s.client.get_escrow(&id).unwrap();
+        assert_eq!(escrow.status, EscrowStatus::Refunded);
+        assert_eq!(escrow.refunded_amount, 1000);
+        assert!(!lock_is_set(&s));
     }
 }
