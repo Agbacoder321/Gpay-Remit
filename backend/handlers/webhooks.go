@@ -297,11 +297,14 @@ func (h *WebhookHandler) RetryWebhookDelivery(c *gin.Context) {
 		return
 	}
 
-	// Reset delivery status for retry
+	// Reset delivery status for retry. A manual retry gives the delivery a fresh
+	// retry budget and takes it out of the dead-letter queue.
 	delivery.Status = "pending"
 	delivery.AttemptCount = 0
+	delivery.RetryCount = 0
 	delivery.NextRetryAt = nil
 	delivery.CompletedAt = nil
+	delivery.DeadLetteredAt = nil
 	if err := h.db.Save(&delivery).Error; err != nil {
 		c.Error(errors.NewInternalError("Failed to reset delivery", err))
 		return

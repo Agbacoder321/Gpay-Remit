@@ -10,7 +10,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const webhookRetryInterval = 5 * time.Minute
+// webhookRetryInterval is how often the worker looks for due retries. It must
+// be well below the shortest backoff step (models.WebhookRetryBackoff[0] = 1m),
+// otherwise that step would effectively be stretched to the poll interval.
+const webhookRetryInterval = 1 * time.Minute
 
 // StartWebhookRetryWorker periodically retries failed/pending webhook
 // deliveries so they are not stuck forever after a transient failure.

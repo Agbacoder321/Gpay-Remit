@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Gpay-Remit/gpay-remit/logger"
+	"github.com/Gpay-Remit/gpay-remit/metrics"
 	"github.com/Gpay-Remit/gpay-remit/models"
 	"gorm.io/gorm"
 )
@@ -120,6 +121,7 @@ func (s *WebhookDeliveryService) TriggerWebhookWithContext(event string, data ma
 			Payload:      string(payloadJSON),
 			Status:       "pending",
 			AttemptCount: 0,
+			MaxRetries:   models.DefaultWebhookMaxRetries,
 		}
 
 		if err := s.db.Create(&delivery).Error; err != nil {
@@ -207,13 +209,32 @@ func getRetryPolicy(errorType ErrorClassification) (maxRetries int, baseDelay ti
 		return 1, 2 * time.Second, true
 	}
 }
-// DeliverWebhook delivers a webhook with per-error-type retry logic (#197)
+
+// DeliverWebhook performs the initial delivery of a webhook. Transient
+// failures get a few short in-line retries (see getRetryPolicy). When those
+// are used up, the delivery is handed to the retry worker, which follows the
+// WebhookRetryBackoff schedule.
 func (s *WebhookDeliveryService) DeliverWebhook(webhook *models.Webhook, delivery *models.WebhookDelivery, requestID string) {
+	s.deliver(webhook, delivery, requestID, true)
+}
+
+// deliver makes attempts at delivering a webhook.
+//
+// allowInline is true for the initial delivery and false for worker-driven
+// retries. A worker retry makes exactly one attempt, so each step of the
+// backoff schedule produces a single request rather than a burst of them.
+func (s *WebhookDeliveryService) deliver(webhook *models.Webhook, delivery *models.WebhookDelivery, requestID string, allowInline bool) {
+	kind := "scheduled"
+	if allowInline {
+		kind = "inline"
+	}
+
 	for {
 		delivery.AttemptCount++
-		
+		isRetry := delivery.AttemptCount > 1
+
 		success, responseCode, responseBody, errMsg, err := s.sendWebhookRequest(webhook, delivery.Payload, requestID)
-		
+
 		delivery.ResponseCode = responseCode
 		delivery.ResponseBody = responseBody
 		delivery.ErrorMessage = errMsg
@@ -225,6 +246,9 @@ func (s *WebhookDeliveryService) DeliverWebhook(webhook *models.Webhook, deliver
 			delivery.NextRetryAt = nil
 			s.db.Save(delivery)
 			webhookDeliverySuccessCount.Add(1)
+			if isRetry {
+				metrics.WebhookRetryAttemptsTotal.WithLabelValues(kind, "success").Inc()
+			}
 
 			logger.Log.WithField("webhook_id", webhook.ID).
 				WithField("delivery_id", delivery.ID).
@@ -232,9 +256,13 @@ func (s *WebhookDeliveryService) DeliverWebhook(webhook *models.Webhook, deliver
 			return
 		}
 
+		if isRetry {
+			metrics.WebhookRetryAttemptsTotal.WithLabelValues(kind, "failure").Inc()
+		}
+
 		// Classify error type for appropriate retry handling
 		errorType := classifyError(err, responseCode)
-		maxRetries, baseDelay, shouldRetry := getRetryPolicy(errorType)
+		maxInline, baseDelay, _ := getRetryPolicy(errorType)
 
 		// Log the error with classification
 		logLevel := logger.Log.WithField("webhook_id", webhook.ID).
@@ -246,39 +274,78 @@ func (s *WebhookDeliveryService) DeliverWebhook(webhook *models.Webhook, deliver
 			logLevel = logLevel.WithError(err)
 		}
 
-		if !shouldRetry || delivery.AttemptCount >= maxRetries {
-			// Mark as failed
-			delivery.Status = "failed"
-			now := time.Now()
-			delivery.CompletedAt = &now
-			delivery.NextRetryAt = nil
-			s.db.Save(delivery)
-			webhookDeliveryFailureCount.Add(1)
-
-			logLevel.Error("Webhook delivery permanently failed")
+		// A 4xx means the endpoint rejected this request. Sending the same
+		// payload again will not change that, so it is dead-lettered now.
+		if errorType == ErrorHTTP4xx {
+			s.markDeadLetter(delivery, "client_error")
+			logLevel.Error("Webhook delivery permanently failed, moved to dead-letter queue")
 			return
 		}
 
-		// Calculate delay based on error type and attempt count
-		var delay time.Duration
-		if errorType == ErrorTimeout || errorType == ErrorHTTP5xx {
-			// Exponential backoff for timeout and 5xx errors
-			delay = baseDelay * time.Duration(1<<uint(delivery.AttemptCount-1))
-		} else {
-			// Fixed delay for other retryable errors
-			delay = baseDelay
+		// Transient failure: retry in-line while the initial delivery still has
+		// in-line budget. Timeouts and 5xx back off exponentially, the rest use a fixed delay.
+		if allowInline && delivery.AttemptCount < maxInline {
+			delay := baseDelay
+			if errorType == ErrorTimeout || errorType == ErrorHTTP5xx {
+				delay = baseDelay * time.Duration(1<<uint(delivery.AttemptCount-1))
+			}
+			logLevel.WithField("retry_in", delay.String()).Warn("Webhook delivery failed, retrying in-line")
+			time.Sleep(delay)
+			continue
 		}
 
-		// Schedule next retry
-		nextRetry := time.Now().Add(delay)
-		delivery.NextRetryAt = &nextRetry
-		s.db.Save(delivery)
-
-		logLevel.Warn("Webhook delivery failed, will retry after delay")
-		
-		// Wait before retry
-		time.Sleep(delay)
+		// In-line budget used up: move to the scheduled backoff, or to the dead-letter queue.
+		if next, delay, deadLettered := s.scheduleOrDeadLetter(delivery); deadLettered {
+			logLevel.Error("Webhook delivery retries exhausted, moved to dead-letter queue")
+		} else {
+			logLevel.WithField("retry_in", delay.String()).
+				WithField("next_retry_at", next.UTC().Format(time.RFC3339)).
+				Warn("Webhook delivery failed, retry scheduled")
+		}
+		return
 	}
+}
+
+// scheduleOrDeadLetter moves a transiently failed delivery to its next backoff
+// step. It returns deadLettered=true instead when the delivery has used all
+// MaxRetries scheduled retries.
+func (s *WebhookDeliveryService) scheduleOrDeadLetter(delivery *models.WebhookDelivery) (next time.Time, delay time.Duration, deadLettered bool) {
+	maxRetries := delivery.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = models.DefaultWebhookMaxRetries
+	}
+	if delivery.RetryCount >= maxRetries {
+		s.markDeadLetter(delivery, "retries_exhausted")
+		return time.Time{}, 0, true
+	}
+
+	step := delivery.RetryCount
+	if step >= len(models.WebhookRetryBackoff) {
+		step = len(models.WebhookRetryBackoff) - 1
+	}
+	delay = models.WebhookRetryBackoff[step]
+	delivery.RetryCount++
+
+	next = time.Now().Add(delay)
+	delivery.Status = "failed"
+	delivery.NextRetryAt = &next
+	delivery.CompletedAt = nil
+	s.db.Save(delivery)
+	return next, delay, false
+}
+
+// markDeadLetter records a permanent failure: the delivery is no longer retried
+// and is listed by ListDeadLetterDeliveries.
+func (s *WebhookDeliveryService) markDeadLetter(delivery *models.WebhookDelivery, reason string) {
+	now := time.Now()
+	delivery.Status = "failed"
+	delivery.CompletedAt = &now
+	delivery.NextRetryAt = nil
+	delivery.DeadLetteredAt = &now
+	s.db.Save(delivery)
+
+	webhookDeliveryFailureCount.Add(1)
+	metrics.WebhookDeadLettersTotal.WithLabelValues(reason).Inc()
 }
 
 // sendWebhookRequest sends the HTTP request to the webhook URL
@@ -338,20 +405,23 @@ func VerifySignature(secret, payload, signature string) bool {
 	return hmac.Equal([]byte(expectedSignature), []byte(signature))
 }
 
-// RetryFailedDeliveries retries webhook deliveries that are pending or failed
+// retryClaimLease stops the next worker tick from picking up a delivery whose
+// scheduled attempt is still in flight. Its outcome overwrites the lease.
+const retryClaimLease = 2 * time.Minute
+
+// RetryFailedDeliveries runs one pass of the retry worker. It makes one attempt
+// for each delivery that is due: pending deliveries never attempted, and failed
+// deliveries whose backoff has elapsed and that still have retries left.
+// Dead-lettered deliveries are never selected.
 func (s *WebhookDeliveryService) RetryFailedDeliveries() error {
-	var deliveries []models.WebhookDelivery
-	now := time.Now()
-	
-	// Find deliveries that need retry
-	if err := s.db.Where("status IN (?) AND (next_retry_at IS NULL OR next_retry_at <= ?)", 
-		[]string{"pending", "failed"}, now).
-		Where("attempt_count < ?", 5).
-		Find(&deliveries).Error; err != nil {
+	deliveries, err := dueWebhookDeliveries(s.db, time.Now())
+	if err != nil {
 		return fmt.Errorf("failed to fetch failed deliveries: %w", err)
 	}
 
-	for _, delivery := range deliveries {
+	for i := range deliveries {
+		delivery := &deliveries[i]
+
 		var webhook models.Webhook
 		if err := s.db.First(&webhook, delivery.WebhookID).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to fetch webhook for retry")
@@ -362,8 +432,34 @@ func (s *WebhookDeliveryService) RetryFailedDeliveries() error {
 			continue
 		}
 
-		go s.DeliverWebhook(&webhook, &delivery, "")
+		s.db.Model(delivery).Update("next_retry_at", time.Now().Add(retryClaimLease))
+		go s.deliver(&webhook, delivery, "", false)
 	}
 
 	return nil
+}
+
+// dueWebhookDeliveries returns the deliveries the retry worker should attempt now.
+func dueWebhookDeliveries(db *gorm.DB, now time.Time) ([]models.WebhookDelivery, error) {
+	var deliveries []models.WebhookDelivery
+	err := db.Where(
+		"dead_lettered_at IS NULL AND ("+
+			"(status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)) OR "+
+			"(status = ? AND next_retry_at <= ? AND retry_count < max_retries))",
+		"pending", now, "failed", now,
+	).Find(&deliveries).Error
+	return deliveries, err
+}
+
+// ListDeadLetterDeliveries returns the permanently failed deliveries for
+// webhooks owned by userID, most recently dead-lettered first.
+func ListDeadLetterDeliveries(db *gorm.DB, userID uint) ([]models.WebhookDelivery, error) {
+	var deliveries []models.WebhookDelivery
+	err := db.Model(&models.WebhookDelivery{}).
+		Select("webhook_deliveries.*").
+		Joins("JOIN webhooks ON webhooks.id = webhook_deliveries.webhook_id AND webhooks.deleted_at IS NULL").
+		Where("webhooks.user_id = ? AND webhook_deliveries.dead_lettered_at IS NOT NULL", userID).
+		Order("webhook_deliveries.dead_lettered_at DESC").
+		Find(&deliveries).Error
+	return deliveries, err
 }
