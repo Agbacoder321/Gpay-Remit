@@ -134,3 +134,24 @@ func PingRedis() error {
 
 	return nil
 }
+
+// Cache is the key/value cache surface used by services that need to be
+// testable without a live Redis. RedisCache is the production implementation.
+type Cache interface {
+	Get(key string, dest interface{}) (bool, error)
+	Set(key string, value interface{}, ttl time.Duration) error
+}
+
+// RedisCache adapts the package-level helpers above to the Cache interface.
+// It degrades to cache misses / no-ops when Redis is unavailable.
+type RedisCache struct{}
+
+// Get implements Cache.
+func (RedisCache) Get(key string, dest interface{}) (bool, error) {
+	return GetCached(key, dest)
+}
+
+// Set implements Cache.
+func (RedisCache) Set(key string, value interface{}, ttl time.Duration) error {
+	return SetCached(key, value, ttl)
+}

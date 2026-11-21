@@ -1,19 +1,14 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Gpay-Remit/gpay-remit/config"
 	"github.com/Gpay-Remit/gpay-remit/errors"
 	"github.com/Gpay-Remit/gpay-remit/services"
-	"github.com/Gpay-Remit/gpay-remit/utils"
+	"github.com/gin-gonic/gin"
 )
-
-const exchangeRateCacheTTL = 5 * time.Minute
 
 type ExchangeRateHandler struct {
 	service *services.ExchangeRateService
@@ -26,6 +21,10 @@ func NewExchangeRateHandler(cfg *config.Config) *ExchangeRateHandler {
 }
 
 // GetRate handles GET /exchange-rates?from=USD&to=EUR
+//
+// Caching, oracle fallback and the circuit breaker live in the service. The
+// X-Exchange-Rate-Source response header reports whether the rate came from
+// cache, the oracle, or a stale copy served during an outage.
 func (h *ExchangeRateHandler) GetRate(c *gin.Context) {
 	from := strings.ToUpper(strings.TrimSpace(c.Query("from")))
 	to := strings.ToUpper(strings.TrimSpace(c.Query("to")))
@@ -40,21 +39,12 @@ func (h *ExchangeRateHandler) GetRate(c *gin.Context) {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("exchange-rate:%s:%s", from, to)
-
-	var cached services.ExchangeRate
-	if found, err := utils.GetCached(cacheKey, &cached); err == nil && found {
-		c.JSON(http.StatusOK, cached)
-		return
-	}
-
 	rate, err := h.service.GetRate(from, to)
 	if err != nil {
 		c.Error(errors.NewInternalError("Failed to retrieve exchange rate", err))
 		return
 	}
 
-	utils.SetCached(cacheKey, rate, exchangeRateCacheTTL)
-
+	c.Header("X-Exchange-Rate-Source", rate.Origin)
 	c.JSON(http.StatusOK, rate)
 }

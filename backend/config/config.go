@@ -108,6 +108,10 @@ type Config struct {
 
 	// Exchange rate oracle/pricing provider
 	ExchangeRateAPIURL string
+	// ExchangeRateCacheTTL is how long a rate fetched from the oracle is served
+	// from Redis before the oracle is consulted again (EXCHANGE_RATE_CACHE_TTL,
+	// a Go duration such as "60s"; default 60s).
+	ExchangeRateCacheTTL time.Duration
 
 	// Sandbox mode — when true the backend uses testnet defaults,
 	// reduced fee rates, and relaxed validation suitable for
@@ -255,7 +259,8 @@ func LoadConfig() (*Config, error) {
 		RedisPassword: os.Getenv("REDIS_PASSWORD"),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 
-		ExchangeRateAPIURL: getEnvOrDefault("EXCHANGE_RATE_API_URL", "https://open.er-api.com/v6/latest"),
+		ExchangeRateAPIURL:   getEnvOrDefault("EXCHANGE_RATE_API_URL", "https://open.er-api.com/v6/latest"),
+		ExchangeRateCacheTTL: getEnvAsDuration("EXCHANGE_RATE_CACHE_TTL", 60*time.Second),
 
 		SandboxMode: sandbox,
 	}
@@ -494,6 +499,20 @@ func getEnvAsInt(key string, defaultValue int) int {
 	}
 	var value int
 	fmt.Sscanf(valueStr, "%d", &value)
+	return value
+}
+
+// getEnvAsDuration parses a Go duration ("30s", "2m"). Unparseable or
+// non-positive values fall back to the default rather than failing startup.
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := time.ParseDuration(valueStr)
+	if err != nil || value <= 0 {
+		return defaultValue
+	}
 	return value
 }
 

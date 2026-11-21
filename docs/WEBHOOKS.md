@@ -404,18 +404,35 @@ func VerifySignature(secret, payload, signature string) bool {
 
 ## Retry Policy
 
-Failed deliveries are retried with exponential backoff. Each delivery allows a maximum of 5 total attempts.
+A delivery gets up to a few quick in-line retries for transient errors. If those are used up, it moves onto a fixed backoff schedule.
 
-| Error Type | Max Retries | Base Delay | Backoff |
-|------------|-------------|------------|---------|
+**In-line retries (initial delivery only):**
+
+| Error Type | In-line attempts | Base Delay | Backoff |
+|------------|------------------|------------|---------|
 | Timeout | 3 | 1s | Exponential (1s, 2s, 4s) |
 | DNS failure | 2 | 5s | Fixed |
-| Connection refused | 0 | — | Not retried (marked failed) |
+| Connection refused | 0 | — | Goes straight to the scheduled backoff |
 | HTTP 5xx | 3 | 1s | Exponential (1s, 2s, 4s) |
-| HTTP 4xx | 0 | — | Not retried (client error) |
-| Other | 1 | 2s | Fixed |
+| HTTP 4xx | 0 | — | Never retried, dead-lettered immediately |
+| Other | 1 | 2s | Goes straight to the scheduled backoff |
 
-A background retry worker periodically picks up `pending` and `failed` deliveries where `attempt_count < 5` and `next_retry_at` has passed.
+**Scheduled backoff (retry worker):** after in-line attempts are exhausted, each retry waits for the next step of this schedule:
+
+| Retry | Delay before retry |
+|-------|--------------------|
+| 1 | 1 minute |
+| 2 | 5 minutes |
+| 3 | 15 minutes |
+| 4 | 1 hour |
+| 5 | 6 hours |
+| 6 | 24 hours |
+
+After the sixth scheduled retry fails, the delivery is given up and dead-lettered. Each `webhook_deliveries` row carries `max_retries` (default 6) and `retry_count`, so a delivery can never exceed its budget. Each scheduled attempt makes exactly one request. The worker checks for due deliveries every minute.
+
+**Dead-letter queue:** a delivery that permanently fails (HTTP 4xx, or scheduled retries exhausted) gets `dead_lettered_at` set. It is never retried automatically and stays visible to the owner. A manual retry via `POST /webhooks/deliveries/:delivery_id/retry` resets the budget and takes the delivery out of the queue.
+
+**Metrics:** `gpay_remit_webhook_retry_attempts_total{kind,outcome}` counts each retry attempt (`kind` is `inline` or `scheduled`). `gpay_remit_webhook_dead_letters_total{reason}` counts dead-lettered deliveries (`client_error` or `retries_exhausted`).
 
 ## Delivery States
 
@@ -423,4 +440,4 @@ A background retry worker periodically picks up `pending` and `failed` deliverie
 |--------|---------|
 | `pending` | Created, awaiting first delivery attempt |
 | `success` | Delivered with a 2xx response |
-| `failed` | All retries exhausted or non-retryable error |
+| `failed` | Last attempt failed. With `next_retry_at` set, a retry is scheduled. With `dead_lettered_at` set, the delivery has permanently failed |
