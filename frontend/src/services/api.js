@@ -2,16 +2,88 @@
 import axios from "axios";
 import { API_BASE_URL } from "../config";
 
+// Global loading indicator state
+let activeRequestsCount = 0;
+const loadingListeners = new Set();
+
+const notifyLoadingListeners = () => {
+  const isLoading = activeRequestsCount > 0;
+  loadingListeners.forEach((listener) => {
+    try {
+      listener(isLoading);
+    } catch {
+      // ignore listener errors
+    }
+  });
+};
+
+export const subscribeLoading = (listener) => {
+  loadingListeners.add(listener);
+  listener(activeRequestsCount > 0);
+  return () => {
+    loadingListeners.delete(listener);
+  };
+};
+
+export const createCancelToken = () => {
+  const controller = new AbortController();
+  return {
+    signal: controller.signal,
+    cancel: (reason) => controller.abort(reason),
+  };
+};
+
+// Default timeout: 30s for reads, 60s for writes
 const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000,
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-api.interceptors.response.use(
-  (response) => response,
+api.interceptors.request.use(
+  (config) => {
+    activeRequestsCount++;
+    notifyLoadingListeners();
+
+    // Set 60s timeout for mutation requests if not explicitly overridden
+    if (["post", "put", "patch", "delete"].includes(config.method?.toLowerCase()) && !config.timeout) {
+      config.timeout = 60000;
+    }
+    return config;
+  },
   (error) => {
+    activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+    notifyLoadingListeners();
+    return Promise.reject(error);
+  }
+);
+
+api.interceptors.response.use(
+  (response) => {
+    activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+    notifyLoadingListeners();
+    return response;
+  },
+  async (error) => {
+    activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+    notifyLoadingListeners();
+
+    const config = error.config;
+    // Retry logic for 5xx and transient network failures (max 3 retries)
+    if (config && (!config._retryCount || config._retryCount < 3)) {
+      const status = error.response?.status;
+      const isTransient = !error.response || (status >= 500 && status <= 599);
+
+      if (isTransient) {
+        config._retryCount = (config._retryCount || 0) + 1;
+        const delay = Math.min(1000 * Math.pow(2, config._retryCount - 1), 5000);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return api(config);
+      }
+    }
+
     const payload = error.response?.data;
     if (payload?.error) {
       return Promise.reject(payload.error);
@@ -23,20 +95,19 @@ api.interceptors.response.use(
   }
 );
 
-export const sendRemittance = (data) => api.post("/remittances", data);
-export const getRemittance = (id) => api.get(`/remittances/${id}`);
-export const getRemittances = (page = 1, pageSize = 20) =>
-  api.get(`/remittances?page=${page}&page_size=${pageSize}`);
+export const sendRemittance = (data, config = {}) => api.post("/remittances", data, config);
+export const getRemittance = (id, config = {}) => api.get(`/remittances/${id}`, config);
+export const getRemittances = (page = 1, pageSize = 20, config = {}) =>
+  api.get(`/remittances?page=${page}&page_size=${pageSize}`, config);
 
-export const createInvoice = (data) => api.post("/invoices", data);
-export const getInvoice = (id) => api.get(`/invoices/${id}`);
-export const getInvoices = () => api.get("/invoices");
+export const createInvoice = (data, config = {}) => api.post("/invoices", data, config);
+export const getInvoice = (id, config = {}) => api.get(`/invoices/${id}`, config);
+export const getInvoices = (config = {}) => api.get("/invoices", config);
 
-export const getExchangeRate = (from, to) =>
-  api.get(`/exchange-rates?from=${from}&to=${to}`);
+export const getExchangeRate = (from, to, config = {}) =>
+  api.get(`/exchange-rates?from=${from}&to=${to}`, config);
 
 // ── Auth & 2FA ──────────────────────────────────────────────────────────
-// Uses pquerna/otp TOTP on backend; login accepts optional totp_code.
 export const register = (data) => api.post("/auth/register", data);
 export const login = (data) => api.post("/auth/login", data);
 export const refreshToken = (data) => api.post("/auth/refresh", data);

@@ -7,38 +7,38 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import TransactionHistory from "./pages/TransactionHistory";
 import Onboarding from "./components/Onboarding";
 import { WalletProvider } from "./contexts/WalletContext";
+import { translations, getTranslation } from "./locales/i18n";
 import "./App.css";
 
 // #290: Simple i18n Context
 export const I18nContext = createContext();
 
-const translations = {
-  en: {
-    brand: "Gpay-Remit",
-    tour: "✨ Product Tour",
-    send: "Send Remittance",
-    invoices: "View Invoices",
-    history: "Transaction History",
-    toggleDark: "Toggle Dark Mode",
-    skipToMain: "Skip to main content"
-  },
-  es: {
-    brand: "Gpay-Remit",
-    tour: "✨ Recorrido del producto",
-    send: "Enviar Remesa",
-    invoices: "Ver Facturas",
-    history: "Historial de Transacciones",
-    toggleDark: "Alternar modo oscuro",
-    skipToMain: "Saltar al contenido principal"
+function detectBrowserLanguage() {
+  try {
+    if (typeof navigator !== "undefined" && navigator.language) {
+      const code = navigator.language.split("-")[0].toLowerCase();
+      if (["en", "es", "pt", "fr"].includes(code)) {
+        return code;
+      }
+    }
+  } catch {
+    // fallback
   }
-};
+  return "en";
+}
 
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   // #288: Dark Mode State
   const [darkMode, setDarkMode] = useState(false);
-  // #290: Language State
-  const [lang, setLang] = useState("en");
+  // #290: Language State with browser language detection
+  const [lang, setLang] = useState(() => {
+    return localStorage.getItem("gpay_lang") || detectBrowserLanguage();
+  });
+
+  useEffect(() => {
+    localStorage.setItem("gpay_lang", lang);
+  }, [lang]);
 
   useEffect(() => {
     const completed = localStorage.getItem("gpay_onboarding_completed");
@@ -47,13 +47,19 @@ function App() {
     }
   }, []);
 
-  const t = translations[lang] || translations.en;
+  // Provide fallback: lang -> en -> key
+  const t = (key) => getTranslation(lang, key);
+  // Attach common keys directly for backwards compatibility (e.g. t.brand)
+  const currentTranslations = translations[lang] || translations.en;
+  Object.keys(translations.en).forEach((key) => {
+    t[key] = currentTranslations[key] || translations.en[key] || key;
+  });
 
   return (
     <I18nContext.Provider value={{ lang, setLang, t }}>
       <WalletProvider>
         <Router>
-          <div className={`App ${darkMode ? 'dark-mode' : ''}`}>
+          <div className={`App ${darkMode ? "dark-mode" : ""}`}>
             {/* #291: a11y Skip link */}
             <a href="#main-content" className="skip-link">
               {t.skipToMain}
@@ -62,16 +68,22 @@ function App() {
               <div className="header-brand-row">
                 <h1>{t.brand}</h1>
                 <div className="header-controls">
-                  <select value={lang} onChange={(e) => setLang(e.target.value)} aria-label="Select Language">
+                  <select
+                    value={lang}
+                    onChange={(e) => setLang(e.target.value)}
+                    aria-label="Select Language"
+                  >
                     <option value="en">EN</option>
                     <option value="es">ES</option>
+                    <option value="pt">PT</option>
+                    <option value="fr">FR</option>
                   </select>
-                  <button 
-                    onClick={() => setDarkMode(!darkMode)} 
+                  <button
+                    onClick={() => setDarkMode(!darkMode)}
                     aria-label={t.toggleDark}
                     className="theme-toggle"
                   >
-                    {darkMode ? '☀️' : '🌙'}
+                    {darkMode ? "☀️" : "🌙"}
                   </button>
                   <button
                     type="button"

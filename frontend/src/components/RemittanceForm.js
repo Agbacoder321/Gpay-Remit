@@ -30,6 +30,20 @@ function RemittanceForm() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [submitError, setSubmitError] = useState(null);
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== "undefined" && typeof navigator.onLine === "boolean" ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // #118 — conversion preview state
   const [rate, setRate] = useState(null);
@@ -63,13 +77,19 @@ function RemittanceForm() {
     if (fieldErrors[name]) setFieldErrors((prev) => ({ ...prev, [name]: undefined }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    // #110 — run full validation before sending
-    const errors = validateRemittanceForm(formData);
+  const executeSubmit = async (dataToSubmit) => {
+    const errors = validateRemittanceForm(dataToSubmit);
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       document.getElementById(Object.keys(errors)[0])?.focus();
+      return;
+    }
+
+    if (!navigator.onLine) {
+      setSubmitError({
+        type: "network",
+        message: "Connection lost. Please check your internet connection and try again.",
+      });
       return;
     }
 
@@ -78,21 +98,53 @@ function RemittanceForm() {
     setResult(null);
 
     try {
-      const response = await sendRemittance(formData);
+      const response = await sendRemittance(dataToSubmit);
       setResult(response.data);
       setFormData(INITIAL);
       setFieldErrors({});
     } catch (err) {
-      setSubmitError(err.response?.data?.error || "Failed to send remittance.");
+      let errorType = "general";
+      let errorMsg = "Failed to send remittance.";
+
+      if (!navigator.onLine || err.code === "ERR_NETWORK" || err.message?.includes("Network Error")) {
+        errorType = "network";
+        errorMsg = "Connection lost. Please check your internet connection and try again.";
+      } else if (err.response?.status >= 500 || err.status >= 500) {
+        errorType = "server";
+        errorMsg = "Server error. Please try again later.";
+      } else if (typeof err === "string") {
+        errorMsg = err;
+      } else if (err.response?.data?.error) {
+        errorMsg = err.response.data.error;
+      } else if (err.message) {
+        errorMsg = err.message;
+      }
+
+      setSubmitError({ type: errorType, message: errorMsg });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    executeSubmit(formData);
+  };
+
+  const handleRetry = () => {
+    executeSubmit(formData);
   };
 
   return (
     <div className="remittance-form">
       {/* #116 — explicit heading for landmark + form association */}
       <h2 id="remittance-heading">Send Remittance</h2>
+
+      {!isOnline && (
+        <div role="alert" className="offline-warning" style={{ background: "#ffebee", color: "#c62828", padding: "10px", borderRadius: "6px", marginBottom: "16px" }}>
+          ⚠️ You are currently offline. Please check your connection.
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} noValidate aria-labelledby="remittance-heading">
         <div className="form-group">
@@ -226,8 +278,17 @@ function RemittanceForm() {
 
       {submitError && (
         <div role="alert" className="error" aria-live="assertive">
-          <h3>Error</h3>
-          <p>{submitError}</p>
+          <h3>{submitError.type === "network" ? "Connection Issue" : "Error"}</h3>
+          <p>{submitError.message || submitError}</p>
+          <button
+            type="button"
+            className="retry-btn"
+            onClick={handleRetry}
+            disabled={loading}
+            style={{ marginTop: "8px", padding: "6px 12px", cursor: "pointer" }}
+          >
+            Retry
+          </button>
         </div>
       )}
     </div>
