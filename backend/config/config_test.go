@@ -215,3 +215,13 @@ func TestConfig_Validate_EmailSettings(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SMTP_HOST is required when EMAIL_ENABLED=true")
 }
+
+func TestJWTSelfTest_Success(t *testing.T) {
+	err := validateJWTSelfTest("a-very-secure-jwt-signing-secret-key-32chars")
+	assert.NoError(t, err)
+}
+
+func TestJWTSelfTest_EmptySecretFails(t *testing.T) {
+	err := validateJWTSelfTest("")
+	assert.Error(t, err)
+}

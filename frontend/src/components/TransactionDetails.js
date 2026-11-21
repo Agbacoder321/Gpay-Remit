@@ -1,3 +1,4 @@
+import { formatMinorUnits } from '../utils/currency';
 // #112 — modal/detail view for a single transaction record.
 import React from "react";
 
@@ -27,13 +28,13 @@ function TransactionDetails({ transaction, onClose }) {
           <dd>{transaction.recipient_id}</dd>
           <dt>Amount</dt>
           <dd>
-            {transaction.amount} {transaction.currency}
+            {formatMinorUnits(transaction.amount, transaction.currency)} {transaction.currency}
           </dd>
           {transaction.converted_amount && (
             <>
               <dt>Converted</dt>
               <dd>
-                {transaction.converted_amount} {transaction.target_currency}
+                {formatMinorUnits(transaction.converted_amount, transaction.target_currency)} {transaction.target_currency}
               </dd>
             </>
           )}

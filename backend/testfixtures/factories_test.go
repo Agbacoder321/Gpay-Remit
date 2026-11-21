@@ -1,13 +1,12 @@
 package testfixtures
 
 import (
-	"math"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/models"
 )
 
 // The factories exist so tests stop depending on the zero value of fields they
@@ -58,12 +57,7 @@ func TestSeedMakesGenerationReproducible(t *testing.T) {
 func TestAmountIsPositiveAndRounded(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		amount := Amount()
-		require.Greater(t, amount, 0.0)
-		// Two decimal places, so assertions comparing money do not fail on a
-		// trailing float artefact. Checked as "cents is a whole number" rather
-		// than by truncating, which would itself trip on float representation.
-		cents := amount * 100
-		assert.InDelta(t, math.Round(cents), cents, 1e-6)
+		require.Greater(t, amount, int64(0))
 	}
 }
 

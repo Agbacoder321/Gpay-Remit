@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yourusername/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/models"
 )
 
 // htmlTagPattern matches any `<...>` sequence, used by sanitizeEmailField
@@ -237,10 +237,10 @@ func (s *EmailService) SendPaymentCompletedEmail(user *models.User, payment *mod
 	data := map[string]interface{}{
 		"UserName":         sanitizeEmailField(user.Name),
 		"PaymentID":        payment.ID,
-		"Amount":           fmt.Sprintf("%.2f", payment.Amount),
+		"Amount":           fmt.Sprintf("%.2f", float64(payment.Amount)/100.0),
 		"Currency":         payment.Currency,
 		"RecipientAccount": sanitizeEmailField(payment.RecipientAccount),
-		"Fee":              fmt.Sprintf("%.4f", payment.Fee),
+		"Fee":              fmt.Sprintf("%.4f", float64(payment.Fee)/100.0),
 		"Status":           payment.Status,
 		"Date":             payment.CreatedAt.Format("2006-01-02 15:04:05"),
 	}
@@ -339,7 +339,7 @@ func (s *EmailService) SendEscrowExpirationWarningEmail(user *models.User, payme
 	data := map[string]interface{}{
 		"UserName":         sanitizeEmailField(user.Name),
 		"PaymentID":        payment.ID,
-		"Amount":           fmt.Sprintf("%.2f", payment.Amount),
+		"Amount":           fmt.Sprintf("%.2f", float64(payment.Amount)/100.0),
 		"Currency":         payment.Currency,
 		"RecipientAccount": sanitizeEmailField(payment.RecipientAccount),
 		"EscrowID":         payment.EscrowID,
@@ -430,7 +430,7 @@ func (s *EmailService) SendPaymentFailedEmail(user *models.User, payment *models
 	data := map[string]interface{}{
 		"UserName":         sanitizeEmailField(user.Name),
 		"PaymentID":        payment.ID,
-		"Amount":           fmt.Sprintf("%.2f", payment.Amount),
+		"Amount":           fmt.Sprintf("%.2f", float64(payment.Amount)/100.0),
 		"Currency":         payment.Currency,
 		"RecipientAccount": sanitizeEmailField(payment.RecipientAccount),
 		"Reason":           sanitizeEmailField(reason),
@@ -594,7 +594,7 @@ func (s *EmailService) SendPaymentRequestAcceptedEmail(user *models.User, pr *mo
 	data := map[string]interface{}{
 		"UserName":    sanitizeEmailField(user.Name),
 		"RequestID":   pr.ID,
-		"Amount":      fmt.Sprintf("%.2f", pr.Amount),
+		"Amount":      fmt.Sprintf("%.2f", float64(pr.Amount)/100.0),
 		"Currency":    pr.Currency,
 		"Description": sanitizeEmailField(pr.Description),
 	}
@@ -680,7 +680,7 @@ func (s *EmailService) SendPaymentRequestRejectedEmail(user *models.User, pr *mo
 	data := map[string]interface{}{
 		"UserName":        sanitizeEmailField(user.Name),
 		"RequestID":       pr.ID,
-		"Amount":          fmt.Sprintf("%.2f", pr.Amount),
+		"Amount":          fmt.Sprintf("%.2f", float64(pr.Amount)/100.0),
 		"Currency":        pr.Currency,
 		"Description":     sanitizeEmailField(pr.Description),
 		"RejectionReason": sanitizeEmailField(pr.RejectionReason),
@@ -773,7 +773,7 @@ func (s *EmailService) SendPaymentRequestReceivedEmail(user *models.User, pr *mo
 		"UserName":      sanitizeEmailField(user.Name),
 		"RequesterName": sanitizeEmailField(requesterName),
 		"RequestID":     pr.ID,
-		"Amount":        fmt.Sprintf("%.2f", pr.Amount),
+		"Amount":        fmt.Sprintf("%.2f", float64(pr.Amount)/100.0),
 		"Currency":      pr.Currency,
 		"Description":   sanitizeEmailField(pr.Description),
 		"ExpiresAt":     expiresAt,

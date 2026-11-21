@@ -13,7 +13,7 @@ type PaymentRequest struct {
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 	RequesterID     uint           `gorm:"index;not null" json:"requester_id"`
 	TargetUserID    uint           `gorm:"index;not null" json:"target_user_id"`
-	Amount          float64        `gorm:"not null" json:"amount"`
+	Amount          int64          `gorm:"type:bigint;not null" json:"amount"`
 	Currency        string         `gorm:"size:10;not null" json:"currency"`
 	AssetCode       string         `gorm:"size:12;not null" json:"asset_code"`
 	AssetIssuer     string         `gorm:"size:56" json:"asset_issuer"`

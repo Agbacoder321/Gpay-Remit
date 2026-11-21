@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"github.com/yourusername/gpay-remit/middleware"
-	"github.com/yourusername/gpay-remit/models"
-	"github.com/yourusername/gpay-remit/services"
+	"github.com/Gpay-Remit/gpay-remit/middleware"
+	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/services"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -34,37 +34,37 @@ func setupAnalyticsTestDB(t *testing.T) *gorm.DB {
 		{
 			SenderID:        1,
 			RecipientID:     2,
-			Amount:          1000.00,
+			Amount:          100000,
 			Currency:        "USD",
 			TargetCurrency:  "EUR",
-			ConvertedAmount: 950.00,
+			ConvertedAmount: 95000,
 			Status:          "completed",
-			Fee:             10.00,
-			PlatformFee:     5.00,
-			ForexFee:        2.50,
-			ComplianceFee:   1.00,
-			NetworkFee:      1.50,
+			Fee:             1000,
+			PlatformFee:     500,
+			ForexFee:        250,
+			ComplianceFee:   100,
+			NetworkFee:      150,
 			CreatedAt:       todayStart.Add(1 * time.Hour),
 		},
 		{
 			SenderID:        1,
 			RecipientID:     3,
-			Amount:          2000.00,
+			Amount:          200000,
 			Currency:        "USD",
 			TargetCurrency:  "GBP",
-			ConvertedAmount: 1600.00,
+			ConvertedAmount: 160000,
 			Status:          "completed",
-			Fee:             20.00,
-			PlatformFee:     10.00,
-			ForexFee:        5.00,
-			ComplianceFee:   2.00,
-			NetworkFee:      3.00,
+			Fee:             2000,
+			PlatformFee:     1000,
+			ForexFee:        500,
+			ComplianceFee:   200,
+			NetworkFee:      300,
 			CreatedAt:       todayStart.Add(2 * time.Hour),
 		},
 		{
 			SenderID:    2,
 			RecipientID: 4,
-			Amount:      500.00,
+			Amount:      50000,
 			Currency:    "USD",
 			Status:      "failed",
 			CreatedAt:   todayStart.Add(3 * time.Hour),

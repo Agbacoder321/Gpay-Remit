@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/gpay-remit/config"
-	"github.com/yourusername/gpay-remit/utils"
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/utils"
 )
 
 // RateLimiter stores rate limit information per user

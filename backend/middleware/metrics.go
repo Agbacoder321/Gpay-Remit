@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/gpay-remit/metrics"
+	"github.com/Gpay-Remit/gpay-remit/metrics"
 )
 
 // PrometheusMetrics returns a Gin middleware that records request latency and status metrics.

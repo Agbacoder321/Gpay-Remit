@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/gpay-remit/config"
-	"github.com/yourusername/gpay-remit/errors"
-	"github.com/yourusername/gpay-remit/middleware"
-	"github.com/yourusername/gpay-remit/models"
-	"github.com/yourusername/gpay-remit/services"
-	"github.com/yourusername/gpay-remit/utils"
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/errors"
+	"github.com/Gpay-Remit/gpay-remit/middleware"
+	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/services"
+	"github.com/Gpay-Remit/gpay-remit/utils"
 	"gorm.io/gorm"
 )
 
@@ -106,7 +106,7 @@ func Paginate(c *gin.Context) func(db *gorm.DB) *gorm.DB {
 type CreateRemittanceRequest struct {
 	SenderAccount   string                 `json:"sender_account" binding:"required"`
 	RecipientAccount string                `json:"recipient_account" binding:"required"`
-	Amount          float64                `json:"amount" binding:"required,gt=0"`
+	Amount          int64                  `json:"amount" binding:"required,gt=0"`
 	AssetCode       string                 `json:"asset_code" binding:"required"`
 	AssetIssuer     string                 `json:"asset_issuer"`
 	Conditions      map[string]interface{} `json:"conditions"`
@@ -115,7 +115,7 @@ type CreateRemittanceRequest struct {
 
 type BatchPaymentItem struct {
 	RecipientAccount string                 `json:"recipient_account" binding:"required"`
-	Amount           float64                `json:"amount" binding:"required,gt=0"`
+	Amount           int64                  `json:"amount" binding:"required,gt=0"`
 	Conditions       map[string]interface{} `json:"conditions"`
 	Notes            string                 `json:"notes"`
 }
@@ -130,7 +130,7 @@ type CreateBatchRemittanceRequest struct {
 type SendRemittanceRequest struct {
 	SenderID       uint    `json:"sender_id" binding:"required"`
 	RecipientID    uint    `json:"recipient_id" binding:"required"`
-	Amount         float64 `json:"amount" binding:"required,gt=0"`
+	Amount         int64   `json:"amount" binding:"required,gt=0"`
 	Currency       string  `json:"currency" binding:"required"`
 	TargetCurrency string  `json:"target_currency"`
 	Notes          string  `json:"notes"`
@@ -235,7 +235,7 @@ func (h *RemittanceHandler) CreateRemittance(c *gin.Context) {
 			req.RecipientAccount,
 			req.AssetCode,
 			req.AssetIssuer,
-			fmt.Sprintf("%.7f", req.Amount),
+			fmt.Sprintf("%.7f", float64(req.Amount)/10000000.0),
 		)
 		return stellarErr
 	})
@@ -514,7 +514,7 @@ type CreateInvoiceRequest struct {
 	PaymentID   uint    `json:"payment_id" binding:"required"`
 	IssuerID    uint    `json:"issuer_id" binding:"required"`
 	RecipientID uint    `json:"recipient_id" binding:"required"`
-	Amount      float64 `json:"amount" binding:"required,gt=0"`
+	Amount      int64   `json:"amount" binding:"required,gt=0"`
 	Currency    string  `json:"currency" binding:"required"`
 	Description string  `json:"description"`
 }

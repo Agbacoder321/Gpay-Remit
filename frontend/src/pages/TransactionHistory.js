@@ -1,3 +1,4 @@
+import { formatMinorUnits } from '../utils/currency';
 // #112 — transaction history page with filtering and detail view.
 import React, { useState, useCallback } from "react";
 import { getRemittances } from "../services/api";
@@ -128,7 +129,7 @@ function TransactionHistory() {
                   <td>{tx.sender_id}</td>
                   <td>{tx.recipient_id}</td>
                   <td>
-                    {tx.amount} {tx.currency}
+                    {formatMinorUnits(tx.amount, tx.currency)} {tx.currency}
                   </td>
                   <td>
                     <span className={`status-badge status-${tx.status?.toLowerCase()}`}>
