@@ -1,14 +1,25 @@
 package middleware
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 )
 
-// TLSMiddleware redirects HTTP requests to HTTPS and sets HSTS headers
+// TLSMiddleware redirects HTTP requests to HTTPS and sets HSTS headers.
+// In development, it sets HSTS without redirecting to prevent infinite loops.
 func TLSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Set HSTS header for security
 		c.Writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+		// Only redirect if TLS_ENABLED is true or APP_ENV is production
+		appEnv := os.Getenv("APP_ENV")
+		tlsEnabled := os.Getenv("TLS_ENABLED") == "true" || appEnv == "production"
+		if !tlsEnabled {
+			c.Next()
+			return
+		}
 
 		// Check if request is HTTP and redirect to HTTPS
 		proto := c.GetHeader("X-Forwarded-Proto")

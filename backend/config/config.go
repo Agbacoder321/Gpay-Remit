@@ -64,6 +64,7 @@ func StopConnectionPoolMonitor() {
 type Config struct {
 	Port              string
 	Environment       string
+	TLSEnabled        bool
 	DatabaseURL       string
 	StellarNetwork    string
 	HorizonURL        string
