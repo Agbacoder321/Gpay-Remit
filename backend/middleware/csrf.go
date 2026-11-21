@@ -2,16 +2,19 @@ package middleware
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
 
-// CSRFProtection implements the double-submit cookie pattern
+// CSRFProtection implements the double-submit cookie pattern with timing-safe checks
 func CSRFProtection() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		method := c.Request.Method
+		isProduction := os.Getenv("APP_ENV") == "production"
 
 		// Safe methods: ensure CSRF token exists in cookie
 		if method == "GET" || method == "HEAD" || method == "OPTIONS" {
@@ -19,11 +22,12 @@ func CSRFProtection() gin.HandlerFunc {
 			if err != nil {
 				// Generate new token
 				b := make([]byte, 32)
-				rand.Read(b)
+				_, _ = rand.Read(b)
 				token := hex.EncodeToString(b)
 
-				// HttpOnly=false so JS can read it for the header
-				c.SetCookie("csrf_token", token, 3600*24, "/", "", false, false)
+				// HttpOnly=false so JS can read it for the header; SameSite=Lax and Secure in production
+				c.SetSameSite(http.SameSiteLaxMode)
+				c.SetCookie("csrf_token", token, 3600*24, "/", "", isProduction, false)
 			}
 			c.Next()
 			return
@@ -44,7 +48,8 @@ func CSRFProtection() gin.HandlerFunc {
 			return
 		}
 
-		if cookieToken != headerToken {
+		// Timing-safe comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(headerToken)) != 1 {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid CSRF token"})
 			c.Abort()
 			return

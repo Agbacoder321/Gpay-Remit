@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yourusername/gpay-remit/models"
+	"github.com/yourusername/gpay-remit/utils"
 	"gorm.io/gorm"
 )
 
@@ -82,15 +84,27 @@ func IdempotencyMiddleware(db *gorm.DB, config ...IdempotencyConfig) gin.Handler
 		// Calculate request hash
 		requestHash := calculateRequestHash(bodyBytes)
 
-		// Check for existing idempotency record. This is an optimization
-		// for the common repeat-request case (avoids attempting a Create
-		// — and the "processing" status flap it would cause — for a key
-		// we already know about); it is NOT what makes this race-safe.
-		// See the unique-constraint-violation handling below for that.
+		// 1. Check Redis cache first for fast-path retrieval
+		cacheKey := fmt.Sprintf("idempotency:record:%s", idempotencyKey)
+		var cachedRecord models.IdempotencyRecord
+		found, _ := utils.GetCached(cacheKey, &cachedRecord)
+		if found && cachedRecord.IdempotencyKey != "" {
+			respondFromExistingRecord(c, idempotencyKey, &cachedRecord, requestHash, db)
+			return
+		}
+
+		// Stampede guard using Redis SET NX if available
+		if utils.RedisClient != nil {
+			stampedeKey := fmt.Sprintf("idempotency:stampede:%s", idempotencyKey)
+			_ = utils.RedisClient.SetNX(context.Background(), stampedeKey, "1", 30*time.Second).Err()
+		}
+
+		// Fall back to database on cache miss
 		var existingRecord models.IdempotencyRecord
 		result := db.Where("idempotency_key = ?", idempotencyKey).First(&existingRecord)
 
 		if result.Error == nil {
+			_ = utils.SetCached(cacheKey, existingRecord, cfg.TTL)
 			respondFromExistingRecord(c, idempotencyKey, &existingRecord, requestHash, db)
 			return
 		}
@@ -329,6 +343,10 @@ func updateIdempotencyRecord(c *gin.Context, key string, db *gorm.DB) {
 	if err := db.Save(&record).Error; err != nil {
 		return
 	}
+
+	// Write the response to Redis with TTL
+	cacheKey := fmt.Sprintf("idempotency:record:%s", key)
+	_ = utils.SetCached(cacheKey, record, 24*time.Hour)
 
 	// Update in-memory cache
 	if val, ok := idempotencyCache.Load(key); ok {

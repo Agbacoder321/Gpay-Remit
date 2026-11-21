@@ -274,3 +274,28 @@ func TestGetAllLimits(t *testing.T) {
 	originalLimit := limiter.GetLimit("user:test1:endpoint:GET /test")
 	assert.NotEqual(t, 999, originalLimit.Count)
 }
+
+
+func TestRateLimiter_ConfigurableBackend(t *testing.T) {
+	t.Run("defaults to memory when redis is nil", func(t *testing.T) {
+		t.Setenv("RATE_LIMIT_BACKEND", "memory")
+		cfg := &config.Config{}
+		limiter := newRateLimiter(cfg, time.Minute, time.Hour)
+		defer limiter.Stop()
+
+		allowed, remaining, _ := limiter.IncrementAndCheck("test:backend:mem", 2, time.Minute)
+		assert.True(t, allowed)
+		assert.Equal(t, 1, remaining)
+	})
+
+	t.Run("falls back to memory with warning when redis is nil and backend is redis", func(t *testing.T) {
+		t.Setenv("RATE_LIMIT_BACKEND", "redis")
+		cfg := &config.Config{}
+		limiter := newRateLimiter(cfg, time.Minute, time.Hour)
+		defer limiter.Stop()
+
+		allowed, remaining, _ := limiter.IncrementAndCheck("test:backend:fallback", 2, time.Minute)
+		assert.True(t, allowed)
+		assert.Equal(t, 1, remaining)
+	})
+}

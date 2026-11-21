@@ -1,14 +1,17 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yourusername/gpay-remit/config"
+	"github.com/yourusername/gpay-remit/utils"
 )
 
 // RateLimiter stores rate limit information per user
@@ -70,6 +73,10 @@ func GetRateLimiter(cfg *config.Config) *RateLimiter {
 // instead of sharing — and being unable to reconfigure — the process-wide
 // singleton.
 func newRateLimiter(cfg *config.Config, cleanupInterval, staleAfter time.Duration) *RateLimiter {
+	if os.Getenv("RATE_LIMIT_BACKEND") == "redis" && utils.RedisClient == nil {
+		fmt.Println("WARNING: RATE_LIMIT_BACKEND is set to redis but RedisClient is nil; falling back to in-memory rate limiter")
+	}
+
 	rl := &RateLimiter{
 		limits:          make(map[string]*UserLimit),
 		config:          cfg,
@@ -121,6 +128,27 @@ func (rl *RateLimiter) GetLimit(key string) *UserLimit {
 
 // IncrementAndCheck increments the counter and checks if limit is exceeded
 func (rl *RateLimiter) IncrementAndCheck(key string, maxRequests int, window time.Duration) (allowed bool, remaining int, resetAt time.Time) {
+	backend := os.Getenv("RATE_LIMIT_BACKEND")
+	if backend != "memory" && utils.RedisClient != nil {
+		redisKey := fmt.Sprintf("rate_limit:%s", key)
+		ctx := context.Background()
+		count, err := utils.RedisClient.Incr(ctx, redisKey).Result()
+		if err == nil {
+			if count == 1 {
+				utils.RedisClient.Expire(ctx, redisKey, window)
+			}
+			ttl, errTTL := utils.RedisClient.TTL(ctx, redisKey).Result()
+			if errTTL != nil || ttl < 0 {
+				ttl = window
+			}
+			resetAt = time.Now().Add(ttl)
+			if int(count) > maxRequests {
+				return false, 0, resetAt
+			}
+			return true, maxRequests - int(count), resetAt
+		}
+	}
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -153,6 +181,10 @@ func (rl *RateLimiter) IncrementAndCheck(key string, maxRequests int, window tim
 
 // ResetUserLimit resets the rate limit for a specific user/endpoint (admin function)
 func (rl *RateLimiter) ResetUserLimit(key string) {
+	if utils.RedisClient != nil {
+		ctx := context.Background()
+		_ = utils.RedisClient.Del(ctx, fmt.Sprintf("rate_limit:%s", key)).Err()
+	}
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	delete(rl.limits, key)
